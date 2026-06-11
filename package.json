@@ -18,7 +18,8 @@
     "lint": "tsc --noEmit",
     "get-token": "node scripts/get_threads_token.js",
     "exchange-token": "node scripts/exchange_threads_token.js",
-    "customize-docs": "node scripts/customize_docs.js"
+    "customize-docs": "node scripts/customize_docs.js",
+    "setup-mcp": "node scripts/setup_mcp.js"
   },
   "keywords": [
     "mcp",
