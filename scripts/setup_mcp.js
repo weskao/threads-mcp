@@ -5,6 +5,7 @@ import { execSync, execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import dotenv from 'dotenv';
+import { getCredential, isKeychainSupported } from './keychain.js';
 
 dotenv.config();
 
@@ -39,15 +40,32 @@ function getClaudeDesktopConfigPath() {
 
 function buildMcpEntry(distPath, useKeychain) {
   if (useKeychain) {
-    // macOS: use sh -c so the shell expands $(security ...) at runtime
-    // This avoids storing the raw token in any config file
-    return {
-      command: 'sh',
-      args: [
-        '-c',
-        `THREADS_ACCESS_TOKEN=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null) node "${distPath}"`
-      ]
-    };
+    const safePath = distPath.replace(/\\/g, '/');
+    if (process.platform === 'darwin') {
+      return {
+        command: 'sh',
+        args: [
+          '-c',
+          `THREADS_ACCESS_TOKEN=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null) node "${safePath}"`
+        ]
+      };
+    } else if (process.platform === 'win32') {
+      return {
+        command: 'powershell',
+        args: [
+          '-Command',
+          `$env:THREADS_ACCESS_TOKEN=((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', 'threads-access-token')).Password; node "${safePath}"`
+        ]
+      };
+    } else if (process.platform === 'linux') {
+      return {
+        command: 'sh',
+        args: [
+          '-c',
+          `THREADS_ACCESS_TOKEN=$(secret-tool lookup application threads-mcp service threads-access-token 2>/dev/null) node "${safePath}"`
+        ]
+      };
+    }
   }
   return null; // caller must pass token separately for the env form
 }
@@ -89,12 +107,29 @@ async function setupClaudeDesktop(mcpEntry) {
 
 function buildClaudeMcpAddArgs(scope, distPath, token, useKeychain) {
   if (useKeychain) {
-    return [
-      'mcp', 'add', '-s', scope,
-      'threads', '--',
-      'sh', '-c',
-      `THREADS_ACCESS_TOKEN=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null) node "${distPath}"`
-    ];
+    const safePath = distPath.replace(/\\/g, '/');
+    if (process.platform === 'darwin') {
+      return [
+        'mcp', 'add', '-s', scope,
+        'threads', '--',
+        'sh', '-c',
+        `THREADS_ACCESS_TOKEN=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null) node "${safePath}"`
+      ];
+    } else if (process.platform === 'win32') {
+      return [
+        'mcp', 'add', '-s', scope,
+        'threads', '--',
+        'powershell', '-Command',
+        `$env:THREADS_ACCESS_TOKEN=((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', 'threads-access-token')).Password; node "${safePath}"`
+      ];
+    } else if (process.platform === 'linux') {
+      return [
+        'mcp', 'add', '-s', scope,
+        'threads', '--',
+        'sh', '-c',
+        `THREADS_ACCESS_TOKEN=$(secret-tool lookup application threads-mcp service threads-access-token 2>/dev/null) node "${safePath}"`
+      ];
+    }
   }
   return [
     'mcp', 'add', '-s', scope,
@@ -162,20 +197,19 @@ async function main() {
   let token = '';
   let useKeychain = false;
 
-  if (process.platform === 'darwin') {
-    try {
-      const result = execFileSync(
-        'security',
-        ['find-generic-password', '-a', process.env.USER || os.userInfo().username, '-s', 'threads-access-token', '-w'],
-        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
-      ).trim();
-      if (result) {
-        token = result;
-        useKeychain = true;
-        console.log('🔑 偵測到 macOS Keychain 中的 threads-access-token。');
-        console.log('   將使用 sh -c 形式，Token 從 Keychain 動態讀取，不寫入設定檔。\n');
-      }
-    } catch (e) {}
+  if (isKeychainSupported()) {
+    const result = getCredential('threads-access-token');
+    if (result) {
+      token = result;
+      useKeychain = true;
+      let storageName = '系統安全儲存區';
+      if (process.platform === 'darwin') storageName = 'macOS Keychain';
+      else if (process.platform === 'win32') storageName = 'Windows PasswordVault';
+      else if (process.platform === 'linux') storageName = 'Linux Secret Service';
+      
+      console.log(`🔑 偵測到 ${storageName} 中的 threads-access-token。`);
+      console.log('   將使用動態載入形式，Token 從系統金鑰庫讀取，不寫入設定檔。\n');
+    }
   }
 
   if (!useKeychain) {

@@ -5,6 +5,7 @@ import readline from 'readline';
 import { URL } from 'url';
 import { execSync } from 'child_process';
 import dotenv from 'dotenv';
+import { getCredential, setCredential, getEnvCommand, isKeychainSupported } from './keychain.js';
 
 // 載入現有環境變數
 dotenv.config();
@@ -64,15 +65,11 @@ async function main() {
   let hasKeychainId = false;
   let hasKeychainSecret = false;
 
-  if (process.platform === 'darwin') {
-    try {
-      clientId = execSync('security find-generic-password -a "$USER" -s "threads-app-id" -w 2>/dev/null', { encoding: 'utf8' }).trim();
-      if (clientId) hasKeychainId = true;
-    } catch (e) {}
-    try {
-      clientSecret = execSync('security find-generic-password -a "$USER" -s "threads-app-secret" -w 2>/dev/null', { encoding: 'utf8' }).trim();
-      if (clientSecret) hasKeychainSecret = true;
-    } catch (e) {}
+  if (isKeychainSupported()) {
+    clientId = getCredential('threads-app-id');
+    if (clientId) hasKeychainId = true;
+    clientSecret = getCredential('threads-app-secret');
+    if (clientSecret) hasKeychainSecret = true;
   }
 
   // 備用讀取環境變數 (處理普通字串與指令)
@@ -86,7 +83,7 @@ async function main() {
   // 若仍缺乏，則手動輸入
   if (clientId) {
     if (hasKeychainId) {
-      console.log(`🔑 已從系統 Keychain 成功取得 threads-app-id: ${clientId}`);
+      console.log(`🔑 已從系統安全儲存區成功取得 threads-app-id: ${clientId}`);
     } else {
       console.log(`🔑 已從環境變數取得 threads-app-id: ${clientId}`);
     }
@@ -107,7 +104,7 @@ async function main() {
 
   if (clientSecret) {
     if (hasKeychainSecret) {
-      console.log(`🔑 已從系統 Keychain 成功取得 threads-app-secret (已自動填入)`);
+      console.log(`🔑 已從系統安全儲存區成功取得 threads-app-secret (已自動填入)`);
     } else {
       console.log(`🔑 已從環境變數取得 threads-app-secret (已自動填入)`);
     }
@@ -121,19 +118,16 @@ async function main() {
     process.exit(1);
   }
 
-  // 詢問是否存入 macOS Keychain 或寫回 .env
-  if (process.platform === 'darwin') {
-    const user = process.env.USER || 'default';
+  // 詢問是否存入系統金鑰庫或寫回 .env
+  if (isKeychainSupported()) {
     if (!hasKeychainId && clientId) {
-      const saveId = (await question('\n偵測到系統 Keychain 中尚未儲存 Threads App ID，是否將其存入系統 Keychain？(y/n): ')).trim().toLowerCase();
+      const saveId = (await question('\n偵測到系統金鑰庫中尚未儲存 Threads App ID，是否將其存入系統安全儲存區以提高安全性？(y/n): ')).trim().toLowerCase();
       if (saveId === 'y' || saveId === 'yes') {
-        try {
-          execSync(`security add-generic-password -s "threads-app-id" -a "${user}" -w "${clientId}" -U`);
+        if (setCredential('threads-app-id', clientId)) {
           hasKeychainId = true;
-          updateEnvFile('THREADS_APP_ID', '$(security find-generic-password -a "$USER" -s "threads-app-id" -w 2>/dev/null)');
-          console.log('✅ 已成功將 App ID 儲存至 macOS Keychain，並將對應指令寫回 .env。');
-        } catch (err) {
-          console.error('❌ 儲存至 Keychain 失敗：', err.message);
+          updateEnvFile('THREADS_APP_ID', getEnvCommand('threads-app-id'));
+          console.log('✅ 已成功將 App ID 儲存至系統安全儲存區，並將對應指令寫回 .env。');
+        } else {
           updateEnvFile('THREADS_APP_ID', clientId);
           console.log('已將明文 App ID 寫回 .env。');
         }
@@ -144,15 +138,13 @@ async function main() {
     }
 
     if (!hasKeychainSecret && clientSecret) {
-      const saveSecret = (await question('偵測到系統 Keychain 中尚未儲存 Threads App Secret，是否將其存入系統 Keychain？(y/n): ')).trim().toLowerCase();
+      const saveSecret = (await question('偵測到系統金鑰庫中尚未儲存 Threads App Secret，是否將其存入系統安全儲存區以提高安全性？(y/n): ')).trim().toLowerCase();
       if (saveSecret === 'y' || saveSecret === 'yes') {
-        try {
-          execSync(`security add-generic-password -s "threads-app-secret" -a "${user}" -w "${clientSecret}" -U`);
+        if (setCredential('threads-app-secret', clientSecret)) {
           hasKeychainSecret = true;
-          updateEnvFile('THREADS_APP_SECRET', '$(security find-generic-password -a "$USER" -s "threads-app-secret" -w 2>/dev/null)');
-          console.log('✅ 已成功將 App Secret 儲存至 macOS Keychain，並將對應指令寫回 .env。');
-        } catch (err) {
-          console.error('❌ 儲存至 Keychain 失敗：', err.message);
+          updateEnvFile('THREADS_APP_SECRET', getEnvCommand('threads-app-secret'));
+          console.log('✅ 已成功將 App Secret 儲存至系統安全儲存區，並將對應指令寫回 .env。');
+        } else {
           updateEnvFile('THREADS_APP_SECRET', clientSecret);
           console.log('已將明文 App Secret 寫回 .env。');
         }
@@ -162,7 +154,7 @@ async function main() {
       }
     }
   } else {
-    // 非 macOS 環境，直接寫回 .env
+    // 不支援金鑰庫，直接寫回 .env
     updateEnvFile('THREADS_APP_ID', clientId);
     updateEnvFile('THREADS_APP_SECRET', clientSecret);
     console.log('✅ 已將明文 App ID 與 App Secret 寫入 .env。');
@@ -308,20 +300,14 @@ async function main() {
     fs.writeFileSync(envPath, newEnvContent.trim() + '\n', 'utf8');
     console.log(`成功儲存 Access Token 至 ${envPath}`);
 
-    // macOS Keychain 儲存功能
-    if (process.platform === 'darwin') {
-      const saveKeychain = (await question('\n偵測到 macOS 環境，是否將 Long-lived Token 存入系統 Keychain (服務名稱: threads-access-token)? (y/n): ')).trim().toLowerCase();
+    // 系統安全金鑰庫儲存功能
+    if (isKeychainSupported()) {
+      const saveKeychain = (await question('\n是否將 Long-lived Token 存入系統安全金鑰庫中以提高安全性？(y/n): ')).trim().toLowerCase();
       if (saveKeychain === 'y' || saveKeychain === 'yes') {
-        try {
-          const user = process.env.USER || 'default';
-          execSync(`security add-generic-password -s "threads-access-token" -a "${user}" -w "${longLivedToken}" -U`);
-          console.log('✅ 已成功將 Token 儲存至 macOS Keychain。');
-          
-          // 同時修改其於 .env 裡面的值
-          updateEnvFile('THREADS_ACCESS_TOKEN', '$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null)');
-          console.log('✅ 已成功將 .env 中的 THREADS_ACCESS_TOKEN 更新為 Keychain 讀取指令。');
-        } catch (keychainErr) {
-          console.error('❌ 儲存至 Keychain 失敗：', keychainErr.message);
+        if (setCredential('threads-access-token', longLivedToken)) {
+          console.log('✅ 已成功將 Token 儲存至系統安全儲存區。');
+          updateEnvFile('THREADS_ACCESS_TOKEN', getEnvCommand('threads-access-token'));
+          console.log('✅ 已成功將 .env 中的 THREADS_ACCESS_TOKEN 更新為安全讀取指令。');
         }
       }
     }
