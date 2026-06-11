@@ -1,23 +1,29 @@
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import os from 'os';
 
-// 偵測目前平台
 const platform = process.platform;
+
+const ALLOWED_SERVICE_NAMES = new Set([
+  'threads-app-id',
+  'threads-app-secret',
+  'threads-access-token',
+]);
+
+function assertServiceName(serviceName) {
+  if (!ALLOWED_SERVICE_NAMES.has(serviceName)) {
+    throw new Error(`Invalid keychain service name: ${serviceName}`);
+  }
+}
 
 /**
  * 檢查目前系統是否支援金鑰庫儲存
- * @returns {boolean} 是否支援
+ * @returns {boolean}
  */
 export function isKeychainSupported() {
-  if (platform === 'darwin') {
-    return true;
-  }
-  if (platform === 'win32') {
-    return true;
-  }
+  if (platform === 'darwin' || platform === 'win32') return true;
   if (platform === 'linux') {
     try {
-      execSync('which secret-tool', { stdio: 'ignore' });
+      execFileSync('which', ['secret-tool'], { stdio: 'ignore' });
       return true;
     } catch (e) {
       return false;
@@ -28,35 +34,49 @@ export function isKeychainSupported() {
 
 /**
  * 自金鑰庫取得金鑰的值
- * @param {string} serviceName - 密鑰服務名稱 ('threads-app-id' | 'threads-app-secret' | 'threads-access-token')
+ * @param {string} serviceName - 'threads-app-id' | 'threads-app-secret' | 'threads-access-token'
  * @returns {string} 密鑰值，若不存在或不支援則傳回空字串
  */
 export function getCredential(serviceName) {
+  assertServiceName(serviceName);
+  const user = process.env.USER || os.userInfo().username || 'default';
+
   if (platform === 'darwin') {
     try {
-      return execSync(`security find-generic-password -a "$USER" -s "${serviceName}" -w 2>/dev/null`, { encoding: 'utf8' }).trim();
+      return execFileSync(
+        'security',
+        ['find-generic-password', '-a', user, '-s', serviceName, '-w'],
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
+      ).trim();
     } catch (e) {
       return '';
     }
   }
-  
+
   if (platform === 'win32') {
     try {
-      const cmd = `powershell -Command "$vault = New-Object Windows.Security.Credentials.PasswordVault; try { ($vault.Retrieve('threads-mcp', '${serviceName}')).Password } catch { exit 1 }"`;
-      return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+      return execFileSync(
+        'powershell',
+        ['-Command', `try { ((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', $env:SVC_NAME)).Password } catch { exit 1 }`],
+        { encoding: 'utf8', env: { ...process.env, SVC_NAME: serviceName }, stdio: ['pipe', 'pipe', 'ignore'] }
+      ).trim();
     } catch (e) {
       return '';
     }
   }
-  
+
   if (platform === 'linux') {
     try {
-      return execSync(`secret-tool lookup application threads-mcp service "${serviceName}" 2>/dev/null`, { encoding: 'utf8' }).trim();
+      return execFileSync(
+        'secret-tool',
+        ['lookup', 'application', 'threads-mcp', 'service', serviceName],
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
+      ).trim();
     } catch (e) {
       return '';
     }
   }
-  
+
   return '';
 }
 
@@ -67,41 +87,47 @@ export function getCredential(serviceName) {
  * @returns {boolean} 是否成功
  */
 export function setCredential(serviceName, value) {
+  assertServiceName(serviceName);
   const user = process.env.USER || os.userInfo().username || 'default';
-  
+
   if (platform === 'darwin') {
     try {
-      execSync(`security add-generic-password -s "${serviceName}" -a "${user}" -w "${value}" -U`);
+      execFileSync('security', ['add-generic-password', '-s', serviceName, '-a', user, '-w', value, '-U']);
       return true;
     } catch (e) {
       console.error(`❌ macOS Keychain 寫入失敗: ${e.message}`);
       return false;
     }
   }
-  
+
   if (platform === 'win32') {
     try {
-      const safeValue = value.replace(/'/g, "''");
-      const cmd = `powershell -Command "$vault = New-Object Windows.Security.Credentials.PasswordVault; $vault.Add((New-Object Windows.Security.Credentials.PasswordCredential('threads-mcp', '${serviceName}', '${safeValue}')))"`;
-      execSync(cmd, { stdio: 'ignore' });
+      execFileSync(
+        'powershell',
+        ['-Command', `$vault = New-Object Windows.Security.Credentials.PasswordVault; $vault.Add((New-Object Windows.Security.Credentials.PasswordCredential('threads-mcp', $env:SVC_NAME, $env:CRED_VALUE)))`],
+        { env: { ...process.env, SVC_NAME: serviceName, CRED_VALUE: value }, stdio: 'ignore' }
+      );
       return true;
     } catch (e) {
       console.error(`❌ Windows PasswordVault 寫入失敗: ${e.message}`);
       return false;
     }
   }
-  
+
   if (platform === 'linux') {
     try {
-      const cmd = `echo -n "${value}" | secret-tool store --label="Threads MCP ${serviceName}" application threads-mcp service "${serviceName}"`;
-      execSync(cmd, { stdio: 'ignore' });
+      execFileSync(
+        'secret-tool',
+        ['store', '--label', `Threads MCP ${serviceName}`, 'application', 'threads-mcp', 'service', serviceName],
+        { input: value, stdio: ['pipe', 'ignore', 'ignore'] }
+      );
       return true;
     } catch (e) {
       console.error(`❌ Linux Secret Service 寫入失敗: ${e.message}`);
       return false;
     }
   }
-  
+
   return false;
 }
 
@@ -111,6 +137,7 @@ export function setCredential(serviceName, value) {
  * @returns {string} 對應平台指令字串
  */
 export function getEnvCommand(serviceName) {
+  assertServiceName(serviceName);
   if (platform === 'darwin') {
     return `$(security find-generic-password -a "$USER" -s "${serviceName}" -w 2>/dev/null)`;
   }
