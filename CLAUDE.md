@@ -17,6 +17,10 @@ npm run start   # node dist/index.js — run the built server
 
 Tests are not configured yet (`npm test` is a placeholder), although `jest`/`ts-jest` are installed and a `tests/` directory exists.
 
+## Markdown
+
+When any `.md` file is modified, also fix markdownlint warnings in that file.
+
 ## Cross-platform support
 
 When modifying code, consider all target platforms — **macOS, Linux, and Windows**. In particular:
