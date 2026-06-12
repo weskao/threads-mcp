@@ -266,7 +266,7 @@ Description=Threads MCP token refresh (renew long-lived token)
 [Service]
 Type=oneshot
 WorkingDirectory=${projectRoot}
-ExecStart=${nodeBin} ${refreshScript} --quiet
+ExecStart="${nodeBin}" "${refreshScript}" --quiet
 `;
   const timer = `[Unit]
 Description=Weekly Threads MCP token refresh
