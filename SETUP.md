@@ -391,11 +391,22 @@ npm run uninstall-autostart
 
 ### 2. 登記給 Claude Code（切換模式）
 
+> 💡 **先確認目前是哪種模式**：切換前可先查 user-scope 設定的 transport（`stdio` 或 `http`）：
+>
+> ```bash
+> claude mcp get threads
+> # 或用 Makefile 捷徑：
+> make config-check
+> ```
+
 安裝腳本結束時會印出登記指令。**切換至 HTTP 模式：**
 
 ```bash
+# 注意：claude mcp add 不會覆寫既有設定，若 threads 已存在會報 "already exists"。
+# 切換模式務必「先 remove 再 add」：
+claude mcp remove threads -s user
 claude mcp add --transport http --scope user threads http://127.0.0.1:8307/mcp
-# 或用 Makefile 捷徑：
+# 或用 Makefile 捷徑（已內建先 remove 再 add）：
 make use-http
 ```
 
@@ -407,6 +418,15 @@ claude mcp add --scope user threads node -- /path/to/threads-mcp/dist/index.js
 # 或用 Makefile 捷徑：
 make use-stdio
 ```
+
+> 🧹 **切到 HTTP 後清掉殘留的 stdio 行程**：切換前各 IDE 各自啟動的 stdio 子行程不會自動結束，可用：
+>
+> ```bash
+> make ps-check    # 先看有哪些行程（保留 --http 那個常駐行程）
+> make kill-stale  # 清掉所有 stdio 行程，只留 --http 常駐行程
+> ```
+>
+> ⚠️ 這些 stdio 行程是各編輯器（VSCode／Antigravity／Windsurf…）目前執行中的 Claude Code **各自 spawn** 的。若該編輯器的 MCP 設定還沒切到 HTTP，下次重連／重開時仍會再 spawn 一個新的 stdio 行程。要根治請先 `make use-http` 並重啟編輯器，`kill-stale` 只是清當下殘留。
 
 或手動加入 `~/.claude.json` 的 `mcpServers`（HTTP 模式）：
 
@@ -460,7 +480,9 @@ npm run start:http
 | `make service-stop` | 停止服務（同 `thmcp_unload`） |
 | `make service-status` | 確認服務在 `:8307` 上運行（同 `thmcp_check`） |
 | `make ps-check` | 列出所有 threads-mcp 行程（PID、PPID、記憶體），偵測殭屍或重複 stdio 行程 |
-| `make use-http` | Claude config 切換至 HTTP 模式 |
+| `make kill-stale` | 清掉所有 stdio 殘留行程，只保留 `--http` 常駐行程 |
+| `make config-check` | 顯示目前 Claude user-scope 的 threads 設定（確認 stdio／http） |
+| `make use-http` | Claude config 切換至 HTTP 模式（先 remove 再 add） |
 | `make use-stdio` | Claude config 切回 stdio 模式 |
 | `make start-http` | 前景啟動 HTTP 伺服器（不安裝服務） |
 | `make build` | 編譯 TypeScript → `dist/` |
