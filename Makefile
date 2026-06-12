@@ -16,8 +16,8 @@ endef
 .DEFAULT_GOAL := list
 
 .PHONY: list help notify build clean dev lint start start-http ngrok-images \
-        install-service uninstall-service service-start service-stop service-status ps-check \
-        use-http use-stdio get-token exchange-token setup-mcp
+        install-service uninstall-service service-start service-stop service-status ps-check kill-stale \
+        config-check use-http use-stdio get-token exchange-token setup-mcp
 
 list:
 	@echo "Available commands:"
@@ -85,9 +85,18 @@ ps-check: ## 列出所有執行中的 threads-mcp 行程（偵測殭屍／重複
 	@ps -eo pid,ppid,rss,command | grep "threads-mcp/dist/index.js" | grep -v grep \
 	  || echo "(none)"
 
+kill-stale: ## 清掉所有 stdio 殘留行程（保留 --http 常駐行程）\n注意：MCP 設定仍指向 stdio 的 IDE，重連時會再 spawn — 請先 make use-http
+	@pids=$$(ps -axo pid,command | grep '[t]hreads-mcp/dist/index.js' | grep -v -- '--http' | awk '{print $$1}'); \
+	if [ -n "$$pids" ]; then echo "Killing stdio instances: $$pids"; kill $$pids; \
+	else echo "No stale stdio instances found"; fi
+
 # ── Claude MCP config ─────────────────────────────────────────────────────
 
+config-check: ## 顯示目前 Claude user-scope 的 threads 設定（確認是 stdio 還是 http）
+	@claude mcp get threads 2>&1 || echo "(threads 尚未登記至 Claude)"
+
 use-http: ## 將 Claude config 切換至 HTTP 模式（共用常駐行程，port 8307）
+	-claude mcp remove threads -s user 2>/dev/null
 	claude mcp add --transport http --scope user threads $(HTTP_URL)
 	@echo "✓ Claude now uses HTTP: $(HTTP_URL)"
 	@echo "  Restart Claude Code to apply"
