@@ -1,0 +1,252 @@
+#!/usr/bin/env node
+/**
+ * Cross-platform autostart installer for the resident Threads MCP HTTP server.
+ *
+ * Registers `node dist/index.js --http` as a per-user background service that
+ * starts on login and restarts on crash, so a single resident process serves
+ * every IDE/Claude client over Streamable HTTP (instead of each client spawning
+ * its own stdio child).
+ *
+ *   macOS    → launchd user agent   (~/Library/LaunchAgents/com.threads-mcp.server.plist)
+ *   Linux    → systemd user service (~/.config/systemd/user/threads-mcp.service)
+ *   Windows  → Task Scheduler logon task (ThreadsMcpServer)
+ *
+ * Token resolution mirrors the stdio setup: the launch command tries the system
+ * keychain first (macOS Keychain / Linux Secret Service / Windows PasswordVault)
+ * and falls back to the project's .env (loaded by dotenv from the working dir).
+ *
+ * Usage:
+ *   node scripts/install-autostart.js [--port 8307] [--host 127.0.0.1]
+ *   node scripts/install-autostart.js --uninstall
+ */
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(__dirname, '..');
+const entry = path.join(projectRoot, 'dist', 'index.js');
+const nodeBin = process.execPath; // absolute node path — robust across platforms
+const logDir = path.join(projectRoot, 'logs');
+
+const LABEL = 'com.threads-mcp.server'; // macOS launchd label
+const UNIT = 'threads-mcp.service'; // Linux systemd unit name
+const TASK = 'ThreadsMcpServer'; // Windows scheduled-task name
+
+// --- args ---------------------------------------------------------------------
+const args = process.argv.slice(2);
+const argVal = (name, def) => {
+  const eq = args.find((a) => a.startsWith(`${name}=`));
+  if (eq) return eq.slice(name.length + 1);
+  const i = args.indexOf(name);
+  return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : def;
+};
+const uninstall = args.includes('--uninstall');
+const port = argVal('--port', process.env.MCP_HTTP_PORT || '8307');
+const host = argVal('--host', process.env.MCP_HTTP_HOST || '127.0.0.1');
+
+function run(cmd, cmdArgs, opts = {}) {
+  return execFileSync(cmd, cmdArgs, { stdio: 'inherit', ...opts });
+}
+function runQuiet(cmd, cmdArgs) {
+  try {
+    execFileSync(cmd, cmdArgs, { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureBuilt() {
+  if (!fs.existsSync(entry)) {
+    console.error(`✖ 找不到 ${entry}\n  請先建置： npm run build`);
+    process.exit(1);
+  }
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
+function printRegisterHint() {
+  const url = `http://${host}:${port}/mcp`;
+  console.log('\n────────────────────────────────────────────────────────');
+  console.log('🔗 最後一步：把這個常駐 server 登記給 Claude Code（擇一）');
+  console.log('');
+  console.log('  A) 用 CLI（推薦，不必手改設定檔）：');
+  console.log(`     claude mcp add --transport http --scope user threads ${url}`);
+  console.log('');
+  console.log('  B) 手動編輯 ~/.claude.json 的 "mcpServers"：');
+  console.log(
+    JSON.stringify({ threads: { type: 'http', url } }, null, 2)
+      .split('\n')
+      .map((l) => '       ' + l)
+      .join('\n')
+  );
+  console.log('');
+  console.log('  ⚠️ 若該專案在 ~/.claude.json 的 projects.<path>.mcpServers 仍有');
+  console.log('     stdio 版 threads 設定，會 shadow 掉全域 HTTP 設定 — 請一併移除。');
+  console.log('────────────────────────────────────────────────────────');
+}
+
+// ============================== macOS (launchd) ===============================
+function macPlistPath() {
+  return path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
+}
+function macLaunchCommand() {
+  // Resolve the token from Keychain; only export it when non-empty so the .env
+  // fallback (via dotenv) still works when Keychain has nothing.
+  return (
+    'TOK=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null); ' +
+    '[ -n "$TOK" ] && export THREADS_ACCESS_TOKEN="$TOK"; ' +
+    `exec "${nodeBin}" "${entry}" --http --port ${port} --host ${host}`
+  );
+}
+function macInstall() {
+  ensureBuilt();
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>${macLaunchCommand().replace(/&/g, '&amp;').replace(/</g, '&lt;')}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${projectRoot}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${path.join(logDir, 'autostart.out.log')}</string>
+  <key>StandardErrorPath</key>
+  <string>${path.join(logDir, 'autostart.err.log')}</string>
+</dict>
+</plist>
+`;
+  const plistPath = macPlistPath();
+  fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+  fs.writeFileSync(plistPath, plist, 'utf8');
+  const uid = process.getuid();
+  runQuiet('launchctl', ['bootout', `gui/${uid}/${LABEL}`]);
+  run('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  runQuiet('launchctl', ['enable', `gui/${uid}/${LABEL}`]);
+  runQuiet('launchctl', ['kickstart', '-k', `gui/${uid}/${LABEL}`]);
+  console.log(`✓ 已安裝 launchd agent：${plistPath}`);
+  console.log(`  伺服器： http://${host}:${port}/mcp  (開機自動啟動、崩潰自動重啟)`);
+}
+function macUninstall() {
+  const plistPath = macPlistPath();
+  const uid = process.getuid();
+  runQuiet('launchctl', ['bootout', `gui/${uid}/${LABEL}`]);
+  if (fs.existsSync(plistPath)) fs.rmSync(plistPath);
+  console.log(`✓ 已移除 launchd agent：${plistPath}`);
+}
+
+// ============================== Linux (systemd) ===============================
+function linuxUnitPath() {
+  return path.join(os.homedir(), '.config', 'systemd', 'user', UNIT);
+}
+function linuxExecStart() {
+  return (
+    "/bin/sh -c 'TOK=$(secret-tool lookup application threads-mcp service threads-access-token 2>/dev/null); " +
+    '[ -n "$TOK" ] && export THREADS_ACCESS_TOKEN="$TOK"; ' +
+    `exec "${nodeBin}" "${entry}" --http --port ${port} --host ${host}'`
+  );
+}
+function linuxInstall() {
+  ensureBuilt();
+  const unit = `[Unit]
+Description=Threads MCP resident HTTP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${projectRoot}
+ExecStart=${linuxExecStart()}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+`;
+  const unitPath = linuxUnitPath();
+  fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+  fs.writeFileSync(unitPath, unit, 'utf8');
+  run('systemctl', ['--user', 'daemon-reload']);
+  run('systemctl', ['--user', 'enable', '--now', UNIT]);
+  console.log(`✓ 已安裝 systemd user service：${unitPath}`);
+  console.log(`  伺服器： http://${host}:${port}/mcp`);
+  console.log('  💡 若希望未登入時也常駐，執行： sudo loginctl enable-linger "$USER"');
+  console.log('  📜 查看日誌： journalctl --user -u threads-mcp -f');
+}
+function linuxUninstall() {
+  const unitPath = linuxUnitPath();
+  runQuiet('systemctl', ['--user', 'disable', '--now', UNIT]);
+  if (fs.existsSync(unitPath)) fs.rmSync(unitPath);
+  runQuiet('systemctl', ['--user', 'daemon-reload']);
+  console.log(`✓ 已移除 systemd user service：${unitPath}`);
+}
+
+// ============================== Windows (Task Scheduler) ======================
+function windowsActionCommand() {
+  // Single-quote-safe PowerShell: try PasswordVault, then run node with HTTP flags
+  // from the project directory so dotenv can read .env as a fallback.
+  return (
+    "try { $env:THREADS_ACCESS_TOKEN = ((New-Object Windows.Security.Credentials.PasswordVault)." +
+    "Retrieve('threads-mcp','threads-access-token')).Password } catch {}; " +
+    `Set-Location '${projectRoot.replace(/'/g, "''")}'; ` +
+    `& '${nodeBin.replace(/'/g, "''")}' '${entry.replace(/'/g, "''")}' --http --port ${port} --host ${host}`
+  );
+}
+function windowsInstall() {
+  ensureBuilt();
+  const inner = windowsActionCommand().replace(/'/g, "''"); // escape for the outer -Command string
+  const ps = [
+    `$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -WindowStyle Hidden -Command "& {${inner}}"'`,
+    `$trigger = New-ScheduledTaskTrigger -AtLogOn`,
+    `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)`,
+    `Register-ScheduledTask -TaskName '${TASK}' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null`,
+    `Start-ScheduledTask -TaskName '${TASK}'`,
+  ].join('; ');
+  run('powershell', ['-NoProfile', '-Command', ps]);
+  console.log(`✓ 已註冊 Windows 排程工作：${TASK} (登入時自動啟動)`);
+  console.log(`  伺服器： http://${host}:${port}/mcp`);
+}
+function windowsUninstall() {
+  runQuiet('powershell', [
+    '-NoProfile',
+    '-Command',
+    `Stop-ScheduledTask -TaskName '${TASK}' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName '${TASK}' -Confirm:$false -ErrorAction SilentlyContinue`,
+  ]);
+  console.log(`✓ 已移除 Windows 排程工作：${TASK}`);
+}
+
+// ============================== dispatch ======================================
+function main() {
+  const plat = process.platform;
+  try {
+    if (uninstall) {
+      if (plat === 'darwin') macUninstall();
+      else if (plat === 'linux') linuxUninstall();
+      else if (plat === 'win32') windowsUninstall();
+      else throw new Error(`不支援的平台：${plat}`);
+      return;
+    }
+    if (plat === 'darwin') macInstall();
+    else if (plat === 'linux') linuxInstall();
+    else if (plat === 'win32') windowsInstall();
+    else throw new Error(`不支援的平台：${plat}（請手動以 --http 啟動 dist/index.js）`);
+    printRegisterHint();
+  } catch (err) {
+    console.error(`✖ 安裝失敗：${err.message}`);
+    process.exit(1);
+  }
+}
+
+main();

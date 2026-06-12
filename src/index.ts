@@ -2,26 +2,31 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  isInitializeRequest,
+  type CallToolRequest,
 } from '@modelcontextprotocol/sdk/types.js';
+import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { ThreadsAPIClient } from './api/client.js';
+import { LocalFileServer } from './api/local-file-server.js';
 
-dotenv.config();
+// Load .env from the project root resolved relative to this module, not the
+// process CWD. A resident server launched by launchd/systemd/Task Scheduler may
+// run with an unexpected CWD, so a CWD-relative .env would silently fail to load.
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(moduleDir, '..', '.env') });
 
-const server = new Server(
-  {
-    name: 'threads-mcp-server',
-    version: '4.0.1',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
+// A fresh MCP Server is built per connection by createServer() (defined near the
+// bottom of this file), where the two request handlers below are registered.
+// Running one resident HTTP server that creates a server+session per client lets
+// every IDE share a single process instead of each spawning its own stdio child.
 
 let apiClient: ThreadsAPIClient | null = null;
 
@@ -34,7 +39,7 @@ const initializeClient = () => {
   return apiClient;
 };
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+const listToolsHandler = async () => {
   return {
     tools: [
       {
@@ -1082,6 +1087,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       
+      // NEW: Local image publishing via temporary HTTP server
+      {
+        name: 'publish_thread_local_image',
+        description: 'Publish a Threads post with a locally stored image file. Starts a temporary HTTP server to serve the image so the Threads API can fetch it. IMPORTANT: The machine running this MCP server must be publicly reachable from the internet for the Threads API to fetch the image. If behind NAT/firewall, use a tunneling tool (e.g. ngrok) first.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            local_image_path: {
+              type: 'string',
+              description: 'Absolute path to the local image or video file to publish',
+            },
+            text: {
+              type: 'string',
+              description: 'The text content of the post',
+            },
+            port: {
+              type: 'number',
+              description: 'HTTP server port used to serve the file (default: 3456)',
+            },
+            alt_text: {
+              type: 'string',
+              description: 'Accessibility alt text for the media',
+            },
+            reply_control: {
+              type: 'string',
+              enum: ['everyone', 'accounts_you_follow', 'mentioned_only'],
+              description: 'Who can reply to this post',
+            },
+          },
+          required: ['local_image_path', 'text'],
+        },
+      },
+
       // NEW: Token validation and diagnostics
       {
         name: 'validate_setup',
@@ -1104,9 +1142,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
     ],
   };
-});
+};
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+const callToolHandler = async (request: CallToolRequest) => {
   if (!apiClient) {
     apiClient = initializeClient();
   }
@@ -3228,6 +3266,94 @@ add_action('publish_post', 'auto_crosspost_to_threads');
         }
         break;
 
+      case 'publish_thread_local_image': {
+        const {
+          local_image_path: localImagePath,
+          text: localImageText,
+          port: localImagePort,
+          alt_text: localImageAltText,
+          reply_control: localImageReplyControl,
+        } = args as any;
+
+        // Validate local_image_path
+        if (!localImagePath) {
+          throw new Error('local_image_path is required');
+        }
+        if (!path.isAbsolute(localImagePath)) {
+          throw new Error(`local_image_path must be an absolute path, got: ${localImagePath}`);
+        }
+
+        // Auto-detect media_type from file extension
+        const ext = path.extname(localImagePath).toLowerCase();
+        let detectedMediaType: string;
+        if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+          detectedMediaType = 'IMAGE';
+        } else if (['.mp4', '.mov'].includes(ext)) {
+          detectedMediaType = 'VIDEO';
+        } else {
+          throw new Error(
+            `Unsupported file extension "${ext}". Supported extensions: .jpg, .jpeg, .png, .gif, .webp (IMAGE) or .mp4, .mov (VIDEO)`
+          );
+        }
+
+        const server = new LocalFileServer(localImagePort ?? 3456);
+        let imageUrl: string;
+
+        try {
+          imageUrl = await server.start(localImagePath);
+
+          // Get current user ID
+          const userForLocalImage: any = await apiClient.get('/me', { fields: 'id' });
+
+          // Build container data
+          const localImageContainerData: any = {
+            media_type: detectedMediaType,
+            text: localImageText,
+          };
+
+          if (detectedMediaType === 'IMAGE') {
+            localImageContainerData.image_url = imageUrl;
+          } else {
+            localImageContainerData.video_url = imageUrl;
+          }
+
+          if (localImageAltText) {
+            localImageContainerData.alt_text = localImageAltText;
+          }
+
+          if (localImageReplyControl) {
+            localImageContainerData.reply_control = localImageReplyControl;
+          }
+
+          // Step 1: Create media container
+          const localImageContainerResponse: any = await apiClient.post(
+            `/${userForLocalImage.id}/threads`,
+            localImageContainerData
+          );
+
+          if (!localImageContainerResponse.id) {
+            throw new Error('Failed to create media container for local image');
+          }
+
+          // Step 2: Publish the container
+          const localImagePublishResponse: any = await apiClient.post(
+            `/${userForLocalImage.id}/threads_publish`,
+            { creation_id: localImageContainerResponse.id }
+          );
+
+          result = {
+            ...localImagePublishResponse,
+            container_id: localImageContainerResponse.id,
+            media_type: detectedMediaType,
+            image_url_used: imageUrl,
+            published: true,
+          };
+        } finally {
+          await server.stop();
+        }
+        break;
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -3252,12 +3378,174 @@ add_action('publish_post', 'auto_crosspost_to_threads');
       isError: true,
     };
   }
-});
+};
+
+// Build a fresh MCP Server with all request handlers registered. One instance is
+// created per transport connection (one per stdio process, or one per HTTP session).
+function createServer(): Server {
+  const server = new Server(
+    {
+      name: 'threads-mcp-server',
+      version: '4.0.1',
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
+  server.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
+  server.setRequestHandler(CallToolRequestSchema, callToolHandler);
+  return server;
+}
+
+// Transport selection (cross-platform: macOS / Linux / Windows). Defaults to stdio
+// so existing per-IDE usage is unchanged. Opt into the resident Streamable HTTP
+// server (shared by all IDE clients) with either the `--http` CLI flag or
+// MCP_TRANSPORT=http. CLI flags are used in addition to env vars because env-var
+// prefixes (`VAR=x cmd`) are not portable to Windows cmd/PowerShell.
+const argv = process.argv.slice(2);
+const flagValue = (name: string): string | undefined => {
+  const eq = argv.find((a) => a.startsWith(`${name}=`));
+  if (eq) return eq.slice(name.length + 1);
+  const idx = argv.indexOf(name);
+  return idx >= 0 ? argv[idx + 1] : undefined;
+};
+const httpFlag = argv.includes('--http') || flagValue('--transport') === 'http';
+const TRANSPORT = httpFlag ? 'http' : (process.env.MCP_TRANSPORT ?? 'stdio').toLowerCase();
+const HTTP_HOST = flagValue('--host') ?? process.env.MCP_HTTP_HOST ?? '127.0.0.1';
+const HTTP_PORT = Number.parseInt(flagValue('--port') ?? process.env.MCP_HTTP_PORT ?? '8307', 10);
+
+// DNS-rebinding protection. Binding to loopback is NOT sufficient on its own: a
+// malicious web page can make the victim's own browser POST to 127.0.0.1, so the
+// Host/Origin headers must be validated against an allowlist. A rebound DNS name
+// (e.g. Host: attacker.com) won't match and is rejected by the transport.
+const ALLOWED_HOSTS = [
+  ...new Set([`${HTTP_HOST}:${HTTP_PORT}`, `127.0.0.1:${HTTP_PORT}`, `localhost:${HTTP_PORT}`]),
+];
+const ALLOWED_ORIGINS = [
+  ...new Set([
+    `http://${HTTP_HOST}:${HTTP_PORT}`,
+    `http://127.0.0.1:${HTTP_PORT}`,
+    `http://localhost:${HTTP_PORT}`,
+  ]),
+];
+
+// Read and JSON-parse a request body so initialize requests can be detected before
+// a session exists. Resolves undefined for an empty body.
+function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(chunk as Buffer));
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw) {
+        resolve(undefined);
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function runStdio(): Promise<void> {
+  const server = createServer();
+  await server.connect(new StdioServerTransport());
+  console.error('Threads MCP server running on stdio');
+}
+
+async function runHttp(): Promise<void> {
+  // Map of MCP session id -> transport. Each connected IDE gets its own
+  // server+transport pair, so a single resident process serves many clients.
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
+
+  const httpServer = createHttpServer((req, res) => {
+    void (async () => {
+      try {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? HTTP_HOST}`);
+        if (url.pathname !== '/mcp') {
+          res.writeHead(404).end('Not Found');
+          return;
+        }
+
+        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+        if (req.method === 'POST') {
+          const body = await readJsonBody(req);
+          let transport = sessionId ? transports[sessionId] : undefined;
+
+          if (!transport) {
+            if (!isInitializeRequest(body)) {
+              res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+                JSON.stringify({
+                  jsonrpc: '2.0',
+                  error: { code: -32000, message: 'Bad Request: no valid session ID' },
+                  id: null,
+                })
+              );
+              return;
+            }
+            // New client: stand up a fresh server + transport pair for this session.
+            const newTransport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => randomUUID(),
+              enableDnsRebindingProtection: true,
+              allowedHosts: ALLOWED_HOSTS,
+              allowedOrigins: ALLOWED_ORIGINS,
+              onsessioninitialized: (sid) => {
+                transports[sid] = newTransport;
+              },
+            });
+            newTransport.onclose = () => {
+              if (newTransport.sessionId) {
+                delete transports[newTransport.sessionId];
+              }
+            };
+            await createServer().connect(newTransport);
+            transport = newTransport;
+          }
+
+          await transport.handleRequest(req, res, body);
+          return;
+        }
+
+        if (req.method === 'GET' || req.method === 'DELETE') {
+          const transport = sessionId ? transports[sessionId] : undefined;
+          if (!transport) {
+            res.writeHead(400).end('Invalid or missing session ID');
+            return;
+          }
+          await transport.handleRequest(req, res);
+          return;
+        }
+
+        res.writeHead(405).end('Method Not Allowed');
+      } catch (error) {
+        console.error('HTTP request error:', error);
+        if (!res.headersSent) {
+          res.writeHead(500).end('Internal Server Error');
+        }
+      }
+    })();
+  });
+
+  httpServer.listen(HTTP_PORT, HTTP_HOST, () => {
+    console.error(
+      `Threads MCP server running on Streamable HTTP at http://${HTTP_HOST}:${HTTP_PORT}/mcp`
+    );
+  });
+}
 
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('Threads Personal Manager MCP server v5.1.0 running on stdio');
+  if (TRANSPORT === 'http' || TRANSPORT === 'sse' || TRANSPORT === 'streamable-http') {
+    await runHttp();
+  } else {
+    await runStdio();
+  }
 }
 
 main().catch((error) => {

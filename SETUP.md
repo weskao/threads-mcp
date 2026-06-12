@@ -294,6 +294,93 @@ npm run setup-mcp
 
 ---
 
+## 🖥️ 第五階段（進階）：常駐 HTTP 伺服器模式（多 IDE 共用・開機自動啟動）
+
+預設的 **stdio 模式**下，每個 IDE／Claude 視窗都會各自啟動一份 `threads-mcp` 子行程。同時開很多視窗時，會出現多份重複行程佔用記憶體。
+
+改用 **常駐 HTTP（Streamable HTTP）伺服器**後，整台機器只跑**一個**行程，所有 IDE 透過 `http://127.0.0.1:8307/mcp` 共用它，並支援開機自動啟動、崩潰自動重啟。
+
+> stdio 仍是預設模式，不做以下設定就維持原本行為，兩種模式可並存。
+
+### 1. 一鍵安裝（自動偵測作業系統）
+
+```bash
+npm run build              # 先建置出 dist/index.js
+npm run install-autostart  # 安裝常駐服務（macOS / Linux / Windows 皆適用）
+```
+
+腳本會依當前平台自動採用對應機制：
+
+| 平台 | 機制 | 安裝位置／名稱 |
+| ------ | ------ | ---------------- |
+| macOS | launchd user agent | `~/Library/LaunchAgents/com.threads-mcp.server.plist` |
+| Linux | systemd user service | `~/.config/systemd/user/threads-mcp.service` |
+| Windows | Task Scheduler 登入工作 | 工作名稱 `ThreadsMcpServer` |
+
+自訂埠號／主機（注意 `npm run` 的參數要加 `--` 分隔）：
+
+```bash
+npm run install-autostart -- --port 8307 --host 127.0.0.1
+```
+
+移除常駐服務：
+
+```bash
+npm run uninstall-autostart
+```
+
+> **Linux 補充**：若希望未登入時也持續常駐，執行 `sudo loginctl enable-linger "$USER"`；查看日誌用 `journalctl --user -u threads-mcp -f`。
+
+### 2. 登記給 Claude Code
+
+安裝腳本結束時會印出登記指令，擇一執行：
+
+```bash
+claude mcp add --transport http --scope user threads http://127.0.0.1:8307/mcp
+```
+
+或手動加入 `~/.claude.json` 的 `mcpServers`：
+
+```json
+{
+  "mcpServers": {
+    "threads": {
+      "type": "http",
+      "url": "http://127.0.0.1:8307/mcp"
+    }
+  }
+}
+```
+
+> ⚠️ 若某專案在 `~/.claude.json` 的 `projects.<path>.mcpServers` 仍保有 stdio 版的 `threads` 設定，會 shadow 掉全域 HTTP 設定 — 請一併移除。設定後重啟 Claude Code 生效。
+
+### 3. 不想常駐？手動前景啟動
+
+```bash
+npm run start:http
+# 等同於： node dist/index.js --http --port 8307 --host 127.0.0.1
+```
+
+### 4. Token 來源（常駐模式建議使用金鑰庫）
+
+常駐服務解析 Token 的順序：先嘗試系統金鑰庫（macOS Keychain／Linux Secret Service／Windows PasswordVault），找不到再讀取專案 `.env`（以模組路徑解析，不依賴工作目錄）。
+
+> 💡 **macOS 注意**：launchd 服務存取 `~/Documents` 底下的檔案可能受系統隱私權限（TCC）限制，導致讀不到 `.env`。建議常駐模式以金鑰庫存放 Token（執行 `npm run get-token` 時選擇「存入系統安全儲存區」），Token 會透過環境變數注入，不受工作目錄與 TCC 影響。
+
+### 5. 設定參數對照
+
+| CLI 旗標 | 環境變數 | 預設值 | 說明 |
+| ---------- | ---------- | -------- | ------ |
+| `--http` 或 `--transport http` | `MCP_TRANSPORT=http` | （未設定＝stdio） | 啟用常駐 HTTP 模式 |
+| `--port <n>` | `MCP_HTTP_PORT` | `8307` | 監聽埠號 |
+| `--host <h>` | `MCP_HTTP_HOST` | `127.0.0.1` | 監聽位址（僅限本機） |
+
+> 🔒 伺服器只綁定 `127.0.0.1`，不會對外網開放，並啟用 **DNS-rebinding 防護**：會驗證請求的 `Host` / `Origin` 標頭，僅放行 loopback（`127.0.0.1` / `localhost` + 對應埠號），阻擋惡意網頁誘導使用者瀏覽器對本機服務發動請求。
+>
+> CLI 旗標與環境變數皆可使用；因 `VAR=value cmd` 前綴語法在 Windows 不通用，跨平台情境建議優先用 CLI 旗標。
+
+---
+
 ## 🛠️ 實用工具：驗證 Token 狀態與效期
 
 如果您想隨時檢查手邊 Token 的剩餘時間、權限範圍或是否有效，可以使用 Meta 官方提供的偵錯工具：
