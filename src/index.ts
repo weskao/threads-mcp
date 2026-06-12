@@ -12,7 +12,7 @@ import {
 import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
 import { ThreadsAPIClient } from './api/client.js';
 import { LocalFileServer } from './api/local-file-server.js';
@@ -38,6 +38,40 @@ const initializeClient = () => {
   apiClient = new ThreadsAPIClient(accessToken);
   return apiClient;
 };
+
+// --- Token auto-refresh -------------------------------------------------------
+// Threads long-lived tokens expire after 60 days but can be refreshed (resetting
+// the 60-day clock) once the token is ≥24h old and still valid. A resident server
+// runs 24/7, so a periodic in-process check keeps the token alive indefinitely
+// without ever touching the manual OAuth flow. The refresh core lives in plain JS
+// under scripts/ (shared with the standalone CLI + system scheduler) and is loaded
+// dynamically so tsc doesn't need to compile it. Logs go to stderr to keep the
+// stdio MCP channel (stdout) clean. Disable with THREADS_TOKEN_AUTO_REFRESH=0.
+const TOKEN_REFRESH_CHECK_MS = 12 * 60 * 60 * 1000; // every 12h
+const BOOT_REFRESH_DELAY_MS = 10 * 1000; // let the server settle before the first check
+
+async function runTokenRefreshOnce(): Promise<void> {
+  try {
+    const modulePath = path.resolve(moduleDir, '..', 'scripts', 'token-refresh.js');
+    const { refreshThreadsToken } = await import(pathToFileURL(modulePath).href);
+    const result = await refreshThreadsToken({ log: (m: string) => console.error(`[token-refresh] ${m}`) });
+    if (result?.refreshed && result.token) {
+      process.env.THREADS_ACCESS_TOKEN = result.token;
+      apiClient?.updateAccessToken(result.token);
+      console.error('[token-refresh] in-memory access token updated');
+    }
+  } catch (error) {
+    console.error('[token-refresh] check failed:', error instanceof Error ? error.message : error);
+  }
+}
+
+function scheduleTokenAutoRefresh({ recurring }: { recurring: boolean }): void {
+  if (process.env.THREADS_TOKEN_AUTO_REFRESH === '0') return;
+  setTimeout(() => void runTokenRefreshOnce(), BOOT_REFRESH_DELAY_MS).unref();
+  if (recurring) {
+    setInterval(() => void runTokenRefreshOnce(), TOKEN_REFRESH_CHECK_MS).unref();
+  }
+}
 
 const listToolsHandler = async () => {
   return {
@@ -3543,8 +3577,13 @@ async function runHttp(): Promise<void> {
 async function main() {
   if (TRANSPORT === 'http' || TRANSPORT === 'sse' || TRANSPORT === 'streamable-http') {
     await runHttp();
+    // Resident process: check periodically so the token never lapses.
+    scheduleTokenAutoRefresh({ recurring: true });
   } else {
     await runStdio();
+    // Short-lived per-IDE child: a one-shot boot check is enough (the state file
+    // gates it to ~weekly, so frequent stdio launches don't hammer the API).
+    scheduleTokenAutoRefresh({ recurring: false });
   }
 }
 

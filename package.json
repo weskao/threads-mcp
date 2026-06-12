@@ -19,10 +19,12 @@
     "lint": "tsc --noEmit",
     "get-token": "node scripts/get_threads_token.js",
     "exchange-token": "node scripts/exchange_threads_token.js",
+    "refresh-token": "node scripts/refresh_threads_token.js",
     "customize-docs": "node scripts/customize_docs.js",
     "setup-mcp": "node scripts/setup_mcp.js",
     "install-autostart": "node scripts/install-autostart.js",
-    "uninstall-autostart": "node scripts/install-autostart.js --uninstall"
+    "uninstall-autostart": "node scripts/install-autostart.js --uninstall",
+    "ngrok-images": "ngrok http 3456"
   },
   "keywords": [
     "mcp",
