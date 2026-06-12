@@ -15,7 +15,7 @@ endef
 
 .DEFAULT_GOAL := list
 
-.PHONY: list notify build clean dev lint start start-http \
+.PHONY: list help notify build clean dev lint start start-http \
         install-service uninstall-service service-start service-stop service-status \
         use-http use-stdio get-token exchange-token setup-mcp
 
@@ -24,6 +24,8 @@ list:
 	@echo ""
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {command=$$1; sub(/.*: /, "", command); gsub(/\\n/, "\n\t\t\t\t", $$2); printf "\033[36m%-32s\033[0m %s\n", "make " command, $$2}'
 	@echo ""
+
+help: list  ## 同 list，列出所有可用指令
 
 notify: ## 發送系統音效 + macOS 通知\n必填：msg  可選：title（預設 Notification）、success（預設 true）\n範例：make notify msg="Build done" title="CI" success=false
 	@$(SHELL_UTILS); notify "$(if $(success),$(success),true)" "$(msg)" "$(if $(title),$(title),Notification)"
