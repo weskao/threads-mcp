@@ -401,10 +401,85 @@ npm run start:http
 | `make service-start` | 啟動服務（同 `thmcp_load`） |
 | `make service-stop` | 停止服務（同 `thmcp_unload`） |
 | `make service-status` | 確認服務在 `:8307` 上運行（同 `thmcp_check`） |
+| `make ps-check` | 列出所有 threads-mcp 行程（PID、PPID、記憶體），偵測殭屍或重複 stdio 行程 |
 | `make use-http` | Claude config 切換至 HTTP 模式 |
 | `make use-stdio` | Claude config 切回 stdio 模式 |
 | `make start-http` | 前景啟動 HTTP 伺服器（不安裝服務） |
 | `make build` | 編譯 TypeScript → `dist/` |
+
+---
+
+---
+
+## 🖼️ 進階功能：本地圖片／影片貼文（publish_thread_local_image）
+
+工具 `publish_thread_local_image` 讓您直接指定**本機檔案路徑**來發佈含圖文章，無需事先上傳至外部圖床。
+
+### 運作原理
+
+工具在背景啟動一個暫時的本地 HTTP server（預設 port `3456`），將圖片以 URL 形式提供給 Threads API 存取，貼文完成後自動關閉 server。
+
+* 支援格式：`.jpg` / `.jpeg` / `.png` / `.gif` / `.webp`（圖片）、`.mp4` / `.mov`（影片）
+* 路徑必須是**絕對路徑**（如 `/Users/<username>/Pictures/photo.jpg`）
+
+> ⚠️ **前置條件**：Threads 伺服器必須能從外部網路存取您本機的 port `3456`。
+> 若您在 NAT / 防火牆後方（一般家用或公司網路均屬此類），需先透過 **ngrok** 建立對外 tunnel——伺服器會自動偵測並使用 ngrok 提供的公開 URL。
+
+### 設定 ngrok（NAT / 防火牆環境必做）
+
+#### 1. 安裝 ngrok
+
+* **macOS（Homebrew，推薦）**：
+
+  ```bash
+  brew install ngrok
+  ```
+
+* **其他平台**：前往 [ngrok 官網下載頁](https://ngrok.com/download) 安裝。
+
+#### 2. 設定 authtoken（僅需一次）
+
+1. 前往 [ngrok Dashboard → Your Authtoken](https://dashboard.ngrok.com/get-started/your-authtoken) 取得您的 authtoken。
+2. 執行以下指令完成綁定：
+
+   ```bash
+   ngrok config add-authtoken <your_authtoken>
+   ```
+
+#### 3. 每次使用前：啟動 tunnel
+
+在另一個終端機視窗執行（**與發佈圖片的工具同時保持開啟**）：
+
+```bash
+make ngrok-images
+# 等同於：ngrok http 3456
+```
+
+ngrok 啟動後會顯示類似：
+
+```text
+Forwarding  https://xxxx-xx-xxx.ngrok-free.app -> http://localhost:3456
+```
+
+**不需要複製或手動設定此 URL**——工具會自動查詢 ngrok 本地 API（`127.0.0.1:4040`）並使用對外公開的 HTTPS URL。
+
+#### 4. 使用工具
+
+tunnel 保持開啟的情況下，直接透過 Claude 呼叫即可：
+
+```text
+請使用 publish_thread_local_image 工具，
+圖片路徑：/Users/<username>/Pictures/photo.jpg
+貼文內容：今天的風景 #攝影
+```
+
+工具回傳結果中的 `image_url_used` 欄位會顯示實際使用的 ngrok URL，可用於確認。
+
+### 注意事項
+
+* ngrok **免費方案**每月有流量上限，且每次重啟 tunnel 的 URL 都會改變（不影響使用，因為工具每次都即時查詢）。
+* tunnel 只需在**工具執行期間**保持開啟，貼文完成後即可關閉。
+* 若機器有直接對外 IP（例如雲端主機），則不需要 ngrok——工具會自動改用本機 IP。
 
 ---
 

@@ -15,8 +15,8 @@ endef
 
 .DEFAULT_GOAL := list
 
-.PHONY: list help notify build clean dev lint start start-http \
-        install-service uninstall-service service-start service-stop service-status \
+.PHONY: list help notify build clean dev lint start start-http ngrok-images \
+        install-service uninstall-service service-start service-stop service-status ps-check \
         use-http use-stdio get-token exchange-token setup-mcp
 
 list:
@@ -52,6 +52,9 @@ start: ## 以 stdio 模式執行（每個 IDE 各自啟動）
 start-http: ## 在前景以 HTTP 模式執行（port 8307）
 	npm run start:http
 
+ngrok-images: ## 啟動 ngrok tunnel（port 3456）供 publish_thread_local_image 使用\n需先安裝 ngrok 並完成 authtoken 設定（見 SETUP.md）
+	ngrok http 3456
+
 # ── macOS launchd service ─────────────────────────────────────────────────
 
 install-service: build ## build + 安裝 + 啟動 launchd 常駐服務
@@ -73,6 +76,14 @@ service-stop: ## 停止 launchd 服務（同 thmcp_unload）
 service-status: ## 確認服務在 :8307 上運行（同 thmcp_check）
 	@launchctl list | grep threads-mcp && echo "---" && lsof -i :8307 | grep LISTEN \
 	  || echo "Service not running"
+
+ps-check: ## 列出所有執行中的 threads-mcp 行程（偵測殭屍／重複 stdio 行程）
+	@echo "=== threads-mcp processes ==="
+	@pgrep -fl "threads-mcp/dist/index.js" || echo "(none)"
+	@echo ""
+	@echo "=== PID / PPID / RSS (KB) ==="
+	@ps -eo pid,ppid,rss,command | grep "threads-mcp/dist/index.js" | grep -v grep \
+	  || echo "(none)"
 
 # ── Claude MCP config ─────────────────────────────────────────────────────
 
