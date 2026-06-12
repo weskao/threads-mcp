@@ -22,6 +22,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import net from 'net';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
@@ -52,6 +53,9 @@ const argVal = (name, def) => {
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : def;
 };
 const uninstall = args.includes('--uninstall');
+const statusMode = args.includes('--status');
+const startMode = args.includes('--start');
+const stopMode = args.includes('--stop');
 const port = argVal('--port', process.env.MCP_HTTP_PORT || '8307');
 const host = argVal('--host', process.env.MCP_HTTP_HOST || '127.0.0.1');
 
@@ -65,6 +69,28 @@ function runQuiet(cmd, cmdArgs) {
   } catch {
     return false;
   }
+}
+/** Run a command, return { ok, output }. Never throws. */
+function runCapture(cmd, cmdArgs) {
+  try {
+    const output = execFileSync(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+    return { ok: true, output };
+  } catch (err) {
+    const output =
+      (err.stdout ? err.stdout.toString() : '') + (err.stderr ? err.stderr.toString() : '');
+    return { ok: false, output };
+  }
+}
+/** Probe whether a TCP port is listening. Returns a Promise<boolean>. */
+function isPortListening(portNum) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; s.destroy(); resolve(v); } };
+    const s = net.createConnection({ host: '127.0.0.1', port: portNum });
+    s.on('connect', () => finish(true));
+    s.on('error', () => finish(false));
+    s.setTimeout(1000, () => finish(false));
+  });
 }
 
 function ensureBuilt() {
@@ -206,6 +232,50 @@ function macUninstallRefresh() {
   console.log(`✓ 已移除 token 續期排程：${plistPath}`);
 }
 
+// ---- macOS: service control (status/start/stop) ----
+async function macStatus() {
+  const uid = process.getuid();
+  const { ok, output } = runCapture('launchctl', ['print', `gui/${uid}/${LABEL}`]);
+  if (ok) {
+    console.log(output.trimEnd());
+  } else {
+    // Fallback: check whether the label appears in the list at all
+    const list = runCapture('launchctl', ['list']);
+    const inList = list.output.includes(LABEL);
+    if (inList) {
+      console.log(`service ${LABEL}: registered but not running (launchctl print failed)`);
+    } else {
+      console.log(`service ${LABEL}: not loaded (plist may not be installed)`);
+    }
+  }
+  const portNum = parseInt(port, 10);
+  const listening = await isPortListening(portNum);
+  console.log(`port ${portNum}: ${listening ? 'LISTENING' : 'not listening'}`);
+}
+function macStart() {
+  const uid = process.getuid();
+  const plistPath = macPlistPath();
+  if (!fs.existsSync(plistPath)) {
+    console.error(`✖ Plist not found: ${plistPath}\n  Run without --start to install first.`);
+    process.exit(1);
+  }
+  // Try bootstrap; if already bootstrapped, fall back to kickstart -k
+  const bootstrapped = runQuiet('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  if (!bootstrapped) {
+    run('launchctl', ['kickstart', '-k', `gui/${uid}/${LABEL}`]);
+  }
+  console.log(`✓ Started ${LABEL}`);
+}
+function macStop() {
+  const uid = process.getuid();
+  const ok = runQuiet('launchctl', ['bootout', `gui/${uid}/${LABEL}`]);
+  if (!ok) {
+    console.error(`✖ Failed to stop ${LABEL} — is it loaded?`);
+    process.exit(1);
+  }
+  console.log(`✓ Stopped ${LABEL}`);
+}
+
 // ============================== Linux (systemd) ===============================
 function linuxUnitPath() {
   return path.join(os.homedir(), '.config', 'systemd', 'user', UNIT);
@@ -295,6 +365,31 @@ function linuxUninstallRefresh() {
   console.log(`✓ 已移除 token 續期排程：${UNIT_REFRESH}.timer`);
 }
 
+// ---- Linux: service control (status/start/stop) ----
+function linuxStatus() {
+  // systemctl status exits non-zero when inactive — capture and print regardless
+  const { output } = runCapture('systemctl', ['--user', 'status', UNIT]);
+  console.log(output.trimEnd() || `service ${UNIT}: (no output from systemctl)`);
+}
+function linuxStart() {
+  try {
+    run('systemctl', ['--user', 'start', UNIT]);
+    console.log(`✓ Started ${UNIT}`);
+  } catch (err) {
+    console.error(`✖ Failed to start ${UNIT}: ${err.message}`);
+    process.exit(1);
+  }
+}
+function linuxStop() {
+  try {
+    run('systemctl', ['--user', 'stop', UNIT]);
+    console.log(`✓ Stopped ${UNIT}`);
+  } catch (err) {
+    console.error(`✖ Failed to stop ${UNIT}: ${err.message}`);
+    process.exit(1);
+  }
+}
+
 // ============================== Windows (Task Scheduler) ======================
 function windowsActionCommand() {
   // Single-quote-safe PowerShell: try PasswordVault, then run node with HTTP flags
@@ -351,14 +446,65 @@ function windowsUninstallRefresh() {
   console.log(`✓ 已移除 token 續期排程：${TASK_REFRESH}`);
 }
 
+// ---- Windows: service control (status/start/stop) ----
+function windowsStatus() {
+  const { ok, output } = runCapture('schtasks', ['/Query', '/TN', TASK, '/FO', 'LIST', '/V']);
+  if (ok) {
+    console.log(output.trimEnd());
+  } else if (output.includes('cannot find')) {
+    console.log(`task ${TASK}: not found (not installed)`);
+  } else {
+    console.log(output.trimEnd() || `task ${TASK}: query returned no output`);
+  }
+}
+function windowsStart() {
+  try {
+    run('schtasks', ['/Run', '/TN', TASK]);
+    console.log(`✓ Started scheduled task ${TASK}`);
+  } catch (err) {
+    console.error(`✖ Failed to start ${TASK}: ${err.message}`);
+    process.exit(1);
+  }
+}
+function windowsStop() {
+  try {
+    run('schtasks', ['/End', '/TN', TASK]);
+    console.log(`✓ Stopped scheduled task ${TASK}`);
+  } catch (err) {
+    console.error(`✖ Failed to stop ${TASK}: ${err.message}`);
+    process.exit(1);
+  }
+}
+
 // ============================== dispatch ======================================
-function main() {
+async function main() {
   const plat = process.platform;
   try {
     if (uninstall) {
       if (plat === 'darwin') macUninstall();
       else if (plat === 'linux') linuxUninstall();
       else if (plat === 'win32') windowsUninstall();
+      else throw new Error(`不支援的平台：${plat}`);
+      return;
+    }
+    if (statusMode) {
+      if (plat === 'darwin') await macStatus();
+      else if (plat === 'linux') linuxStatus();
+      else if (plat === 'win32') windowsStatus();
+      else throw new Error(`不支援的平台：${plat}`);
+      return;
+    }
+    if (startMode) {
+      if (plat === 'darwin') macStart();
+      else if (plat === 'linux') linuxStart();
+      else if (plat === 'win32') windowsStart();
+      else throw new Error(`不支援的平台：${plat}`);
+      return;
+    }
+    if (stopMode) {
+      if (plat === 'darwin') macStop();
+      else if (plat === 'linux') linuxStop();
+      else if (plat === 'win32') windowsStop();
       else throw new Error(`不支援的平台：${plat}`);
       return;
     }
