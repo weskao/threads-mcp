@@ -21,12 +21,6 @@ const MIME_TYPES: Record<string, string> = {
  *
  * Returns the first non-internal IPv4 address found, falling back to
  * '127.0.0.1' when the machine has no external interfaces.
- *
- * NOTE: The Threads API must be able to reach this URL over the public
- * internet. If the server is running behind NAT or a firewall without
- * port-forwarding, the returned URL will not be reachable by Threads and
- * media uploads will fail. Use a tunnel (e.g. ngrok) or a cloud-hosted
- * instance when the machine is not directly internet-accessible.
  */
 function detectPublicIp(): string {
   const interfaces = os.networkInterfaces();
@@ -39,6 +33,35 @@ function detectPublicIp(): string {
     }
   }
   return '127.0.0.1';
+}
+
+/**
+ * Queries the ngrok local API (http://127.0.0.1:4040/api/tunnels) for an
+ * active HTTPS tunnel forwarding to the given port.
+ *
+ * Returns the ngrok public base URL (e.g. "https://xxxx.ngrok-free.app")
+ * when a matching tunnel is found, or `null` otherwise (ngrok not running,
+ * no matching tunnel, or any network/parse error).
+ */
+async function detectNgrokUrl(port: number): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 500);
+    const res = await fetch('http://127.0.0.1:4040/api/tunnels', {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      tunnels?: Array<{ public_url: string; proto: string; config: { addr: string } }>;
+    };
+    const tunnel = (data.tunnels ?? []).find(
+      (t) => t.proto === 'https' && t.config.addr.includes(String(port)),
+    );
+    return tunnel?.public_url ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -124,9 +147,15 @@ export class LocalFileServer {
 
       server.listen(this.port, () => {
         this.server = server;
-        const ip = detectPublicIp();
-        this.url = `http://${ip}:${this.port}/file`;
-        resolve(this.url);
+        void detectNgrokUrl(this.port).then((ngrokBase) => {
+          if (ngrokBase) {
+            this.url = `${ngrokBase}/file`;
+          } else {
+            const ip = detectPublicIp();
+            this.url = `http://${ip}:${this.port}/file`;
+          }
+          resolve(this.url);
+        });
       });
     });
   }
