@@ -331,15 +331,26 @@ npm run uninstall-autostart
 
 > **Linux 補充**：若希望未登入時也持續常駐，執行 `sudo loginctl enable-linger "$USER"`；查看日誌用 `journalctl --user -u threads-mcp -f`。
 
-### 2. 登記給 Claude Code
+### 2. 登記給 Claude Code（切換模式）
 
-安裝腳本結束時會印出登記指令，擇一執行：
+安裝腳本結束時會印出登記指令。**切換至 HTTP 模式：**
 
 ```bash
 claude mcp add --transport http --scope user threads http://127.0.0.1:8307/mcp
+# 或用 Makefile 捷徑：
+make use-http
 ```
 
-或手動加入 `~/.claude.json` 的 `mcpServers`：
+**切回 stdio 模式（每個 IDE 各自啟動）：**
+
+```bash
+claude mcp remove --scope user threads
+claude mcp add --scope user threads node -- /path/to/threads-mcp/dist/index.js
+# 或用 Makefile 捷徑：
+make use-stdio
+```
+
+或手動加入 `~/.claude.json` 的 `mcpServers`（HTTP 模式）：
 
 ```json
 {
@@ -378,6 +389,22 @@ npm run start:http
 > 🔒 伺服器只綁定 `127.0.0.1`，不會對外網開放，並啟用 **DNS-rebinding 防護**：會驗證請求的 `Host` / `Origin` 標頭，僅放行 loopback（`127.0.0.1` / `localhost` + 對應埠號），阻擋惡意網頁誘導使用者瀏覽器對本機服務發動請求。
 >
 > CLI 旗標與環境變數皆可使用；因 `VAR=value cmd` 前綴語法在 Windows 不通用，跨平台情境建議優先用 CLI 旗標。
+
+### 6. Makefile 快捷指令（macOS）
+
+專案提供 `Makefile`，將常用操作整合為單一指令（執行 `make` 或 `make list` 可列出所有目標）：
+
+| 指令 | 說明 |
+| ---- | ---- |
+| `make install-service` | build + 安裝 launchd 服務 + 立即啟動（一次完成） |
+| `make uninstall-service` | 停止並移除 launchd 服務 |
+| `make service-start` | 啟動服務（同 `thmcp_load`） |
+| `make service-stop` | 停止服務（同 `thmcp_unload`） |
+| `make service-status` | 確認服務在 `:8307` 上運行（同 `thmcp_check`） |
+| `make use-http` | Claude config 切換至 HTTP 模式 |
+| `make use-stdio` | Claude config 切回 stdio 模式 |
+| `make start-http` | 前景啟動 HTTP 伺服器（不安裝服務） |
+| `make build` | 編譯 TypeScript → `dist/` |
 
 ---
 
