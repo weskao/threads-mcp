@@ -46,11 +46,14 @@ lint: ## 僅型別檢查（tsc --noEmit）
 
 # ── Run ───────────────────────────────────────────────────────────────────
 
-start: ## 以 stdio 模式執行（每個 IDE 各自啟動）
+start: ## 在前景以 HTTP 模式執行（預設，port 8307）
 	npm run start
 
-start-http: ## 在前景以 HTTP 模式執行（port 8307）
+start-http: ## 在前景以 HTTP 模式執行（port 8307，同 start）
 	npm run start:http
+
+start-stdio: ## 以 stdio 模式執行（每個 IDE 各自啟動）
+	npm run start:stdio
 
 ngrok-images: ## 啟動 ngrok tunnel（port 3456）供 publish_thread_local_image 使用\n需先安裝 ngrok 並完成 authtoken 設定（見 SETUP.md）
 	ngrok http 3456
