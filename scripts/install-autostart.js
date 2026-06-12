@@ -28,12 +28,20 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
 const entry = path.join(projectRoot, 'dist', 'index.js');
+const refreshScript = path.join(projectRoot, 'scripts', 'refresh_threads_token.js');
 const nodeBin = process.execPath; // absolute node path — robust across platforms
 const logDir = path.join(projectRoot, 'logs');
 
 const LABEL = 'com.threads-mcp.server'; // macOS launchd label
 const UNIT = 'threads-mcp.service'; // Linux systemd unit name
 const TASK = 'ThreadsMcpServer'; // Windows scheduled-task name
+
+// Belt-and-suspenders token refresher: a scheduled job that renews the Threads
+// long-lived token even if the resident server is down for an extended period
+// (its own in-process timer is the primary mechanism). Runs weekly + at load.
+const LABEL_REFRESH = 'com.threads-mcp.token-refresh'; // macOS launchd label
+const UNIT_REFRESH = 'threads-mcp-token-refresh'; // Linux systemd unit/timer base name
+const TASK_REFRESH = 'ThreadsMcpTokenRefresh'; // Windows scheduled-task name
 
 // --- args ---------------------------------------------------------------------
 const args = process.argv.slice(2);
@@ -138,6 +146,7 @@ function macInstall() {
   runQuiet('launchctl', ['kickstart', '-k', `gui/${uid}/${LABEL}`]);
   console.log(`✓ 已安裝 launchd agent：${plistPath}`);
   console.log(`  伺服器： http://${host}:${port}/mcp  (開機自動啟動、崩潰自動重啟)`);
+  macInstallRefresh();
 }
 function macUninstall() {
   const plistPath = macPlistPath();
@@ -145,6 +154,56 @@ function macUninstall() {
   runQuiet('launchctl', ['bootout', `gui/${uid}/${LABEL}`]);
   if (fs.existsSync(plistPath)) fs.rmSync(plistPath);
   console.log(`✓ 已移除 launchd agent：${plistPath}`);
+  macUninstallRefresh();
+}
+function macRefreshPlistPath() {
+  return path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL_REFRESH}.plist`);
+}
+function macInstallRefresh() {
+  // Weekly (Sunday 04:00) + RunAtLoad so a missed schedule catches up at next login.
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL_REFRESH}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${nodeBin}</string>
+    <string>${refreshScript}</string>
+    <string>--quiet</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${projectRoot}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>0</integer>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>${path.join(logDir, 'token-refresh.out.log')}</string>
+  <key>StandardErrorPath</key>
+  <string>${path.join(logDir, 'token-refresh.err.log')}</string>
+</dict>
+</plist>
+`;
+  const plistPath = macRefreshPlistPath();
+  fs.writeFileSync(plistPath, plist, 'utf8');
+  const uid = process.getuid();
+  runQuiet('launchctl', ['bootout', `gui/${uid}/${LABEL_REFRESH}`]);
+  run('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  runQuiet('launchctl', ['enable', `gui/${uid}/${LABEL_REFRESH}`]);
+  console.log(`✓ 已安裝 token 續期排程：${plistPath}  (每週 + 開機時)`);
+}
+function macUninstallRefresh() {
+  const plistPath = macRefreshPlistPath();
+  const uid = process.getuid();
+  runQuiet('launchctl', ['bootout', `gui/${uid}/${LABEL_REFRESH}`]);
+  if (fs.existsSync(plistPath)) fs.rmSync(plistPath);
+  console.log(`✓ 已移除 token 續期排程：${plistPath}`);
 }
 
 // ============================== Linux (systemd) ===============================
@@ -184,6 +243,7 @@ WantedBy=default.target
   console.log(`  伺服器： http://${host}:${port}/mcp`);
   console.log('  💡 若希望未登入時也常駐，執行： sudo loginctl enable-linger "$USER"');
   console.log('  📜 查看日誌： journalctl --user -u threads-mcp -f');
+  linuxInstallRefresh();
 }
 function linuxUninstall() {
   const unitPath = linuxUnitPath();
@@ -191,6 +251,48 @@ function linuxUninstall() {
   if (fs.existsSync(unitPath)) fs.rmSync(unitPath);
   runQuiet('systemctl', ['--user', 'daemon-reload']);
   console.log(`✓ 已移除 systemd user service：${unitPath}`);
+  linuxUninstallRefresh();
+}
+function linuxRefreshDir() {
+  return path.join(os.homedir(), '.config', 'systemd', 'user');
+}
+function linuxInstallRefresh() {
+  // oneshot service + weekly timer (Persistent=true catches up missed runs).
+  const dir = linuxRefreshDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const service = `[Unit]
+Description=Threads MCP token refresh (renew long-lived token)
+
+[Service]
+Type=oneshot
+WorkingDirectory=${projectRoot}
+ExecStart=${nodeBin} ${refreshScript} --quiet
+`;
+  const timer = `[Unit]
+Description=Weekly Threads MCP token refresh
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+`;
+  fs.writeFileSync(path.join(dir, `${UNIT_REFRESH}.service`), service, 'utf8');
+  fs.writeFileSync(path.join(dir, `${UNIT_REFRESH}.timer`), timer, 'utf8');
+  run('systemctl', ['--user', 'daemon-reload']);
+  run('systemctl', ['--user', 'enable', '--now', `${UNIT_REFRESH}.timer`]);
+  console.log(`✓ 已安裝 token 續期排程：${UNIT_REFRESH}.timer  (每週)`);
+}
+function linuxUninstallRefresh() {
+  const dir = linuxRefreshDir();
+  runQuiet('systemctl', ['--user', 'disable', '--now', `${UNIT_REFRESH}.timer`]);
+  for (const f of [`${UNIT_REFRESH}.timer`, `${UNIT_REFRESH}.service`]) {
+    const p = path.join(dir, f);
+    if (fs.existsSync(p)) fs.rmSync(p);
+  }
+  runQuiet('systemctl', ['--user', 'daemon-reload']);
+  console.log(`✓ 已移除 token 續期排程：${UNIT_REFRESH}.timer`);
 }
 
 // ============================== Windows (Task Scheduler) ======================
@@ -217,6 +319,7 @@ function windowsInstall() {
   run('powershell', ['-NoProfile', '-Command', ps]);
   console.log(`✓ 已註冊 Windows 排程工作：${TASK} (登入時自動啟動)`);
   console.log(`  伺服器： http://${host}:${port}/mcp`);
+  windowsInstallRefresh();
 }
 function windowsUninstall() {
   runQuiet('powershell', [
@@ -225,6 +328,27 @@ function windowsUninstall() {
     `Stop-ScheduledTask -TaskName '${TASK}' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName '${TASK}' -Confirm:$false -ErrorAction SilentlyContinue`,
   ]);
   console.log(`✓ 已移除 Windows 排程工作：${TASK}`);
+  windowsUninstallRefresh();
+}
+function windowsInstallRefresh() {
+  // Weekly trigger; node runs the refresh script directly (keychain read is internal).
+  const inner = `& '${nodeBin.replace(/'/g, "''")}' '${refreshScript.replace(/'/g, "''")}' --quiet`.replace(/'/g, "''");
+  const ps = [
+    `$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -WindowStyle Hidden -Command "& {${inner}}"' -WorkingDirectory '${projectRoot.replace(/'/g, "''")}'`,
+    `$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 4am`,
+    `$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries`,
+    `Register-ScheduledTask -TaskName '${TASK_REFRESH}' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null`,
+  ].join('; ');
+  run('powershell', ['-NoProfile', '-Command', ps]);
+  console.log(`✓ 已註冊 token 續期排程：${TASK_REFRESH} (每週)`);
+}
+function windowsUninstallRefresh() {
+  runQuiet('powershell', [
+    '-NoProfile',
+    '-Command',
+    `Stop-ScheduledTask -TaskName '${TASK_REFRESH}' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName '${TASK_REFRESH}' -Confirm:$false -ErrorAction SilentlyContinue`,
+  ]);
+  console.log(`✓ 已移除 token 續期排程：${TASK_REFRESH}`);
 }
 
 // ============================== dispatch ======================================
