@@ -32,6 +32,10 @@ const entry = path.join(projectRoot, 'dist', 'index.js');
 const refreshScript = path.join(projectRoot, 'scripts', 'refresh_threads_token.js');
 const nodeBin = process.execPath; // absolute node path — robust across platforms
 const logDir = path.join(projectRoot, 'logs');
+// macOS launchd agents run in a restricted TCC context that blocks access to
+// ~/Documents. Use ~/Library/Logs/ (always accessible to user launchd agents)
+// for the plist log paths, and os.homedir() as the working directory.
+const macLogDir = path.join(os.homedir(), 'Library', 'Logs', 'threads-mcp');
 
 const LABEL = 'com.threads-mcp.server'; // macOS launchd label
 const UNIT = 'threads-mcp.service'; // Linux systemd unit name
@@ -137,6 +141,7 @@ function macLaunchCommand() {
 }
 function macInstall() {
   ensureBuilt();
+  fs.mkdirSync(macLogDir, { recursive: true });
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -150,15 +155,15 @@ function macInstall() {
     <string>${macLaunchCommand().replace(/&/g, '&amp;').replace(/</g, '&lt;')}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${projectRoot}</string>
+  <string>${os.homedir()}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${path.join(logDir, 'autostart.out.log')}</string>
+  <string>${path.join(macLogDir, 'autostart.out.log')}</string>
   <key>StandardErrorPath</key>
-  <string>${path.join(logDir, 'autostart.err.log')}</string>
+  <string>${path.join(macLogDir, 'autostart.err.log')}</string>
 </dict>
 </plist>
 `;
@@ -187,6 +192,7 @@ function macRefreshPlistPath() {
 }
 function macInstallRefresh() {
   // Weekly (Sunday 04:00) + RunAtLoad so a missed schedule catches up at next login.
+  fs.mkdirSync(macLogDir, { recursive: true });
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -200,7 +206,7 @@ function macInstallRefresh() {
     <string>--quiet</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${projectRoot}</string>
+  <string>${os.homedir()}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>StartCalendarInterval</key>
@@ -210,9 +216,9 @@ function macInstallRefresh() {
     <key>Minute</key><integer>0</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>${path.join(logDir, 'token-refresh.out.log')}</string>
+  <string>${path.join(macLogDir, 'token-refresh.out.log')}</string>
   <key>StandardErrorPath</key>
-  <string>${path.join(logDir, 'token-refresh.err.log')}</string>
+  <string>${path.join(macLogDir, 'token-refresh.err.log')}</string>
 </dict>
 </plist>
 `;
