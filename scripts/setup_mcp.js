@@ -46,7 +46,7 @@ function buildMcpEntry(distPath, useKeychain) {
         command: 'sh',
         args: [
           '-c',
-          `THREADS_ACCESS_TOKEN=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null) node "${safePath}"`
+          `THREADS_ACCESS_TOKEN=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null) node "${safePath}" --stdio`
         ]
       };
     } else if (process.platform === 'win32') {
@@ -54,7 +54,7 @@ function buildMcpEntry(distPath, useKeychain) {
         command: 'powershell',
         args: [
           '-Command',
-          `$env:THREADS_ACCESS_TOKEN=((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', 'threads-access-token')).Password; node "${safePath}"`
+          `$env:THREADS_ACCESS_TOKEN=((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', 'threads-access-token')).Password; node "${safePath}" --stdio`
         ]
       };
     } else if (process.platform === 'linux') {
@@ -62,7 +62,7 @@ function buildMcpEntry(distPath, useKeychain) {
         command: 'sh',
         args: [
           '-c',
-          `THREADS_ACCESS_TOKEN=$(secret-tool lookup application threads-mcp service threads-access-token 2>/dev/null) node "${safePath}"`
+          `THREADS_ACCESS_TOKEN=$(secret-tool lookup application threads-mcp service threads-access-token 2>/dev/null) node "${safePath}" --stdio`
         ]
       };
     }
@@ -113,21 +113,21 @@ function buildClaudeMcpAddArgs(scope, distPath, token, useKeychain) {
         'mcp', 'add', '-s', scope,
         'threads', '--',
         'sh', '-c',
-        `THREADS_ACCESS_TOKEN=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null) node "${safePath}"`
+        `THREADS_ACCESS_TOKEN=$(security find-generic-password -a "$USER" -s "threads-access-token" -w 2>/dev/null) node "${safePath}" --stdio`
       ];
     } else if (process.platform === 'win32') {
       return [
         'mcp', 'add', '-s', scope,
         'threads', '--',
         'powershell', '-Command',
-        `$env:THREADS_ACCESS_TOKEN=((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', 'threads-access-token')).Password; node "${safePath}"`
+        `$env:THREADS_ACCESS_TOKEN=((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', 'threads-access-token')).Password; node "${safePath}" --stdio`
       ];
     } else if (process.platform === 'linux') {
       return [
         'mcp', 'add', '-s', scope,
         'threads', '--',
         'sh', '-c',
-        `THREADS_ACCESS_TOKEN=$(secret-tool lookup application threads-mcp service threads-access-token 2>/dev/null) node "${safePath}"`
+        `THREADS_ACCESS_TOKEN=$(secret-tool lookup application threads-mcp service threads-access-token 2>/dev/null) node "${safePath}" --stdio`
       ];
     }
   }
@@ -135,7 +135,7 @@ function buildClaudeMcpAddArgs(scope, distPath, token, useKeychain) {
     'mcp', 'add', '-s', scope,
     '-e', `THREADS_ACCESS_TOKEN=${token}`,
     'threads', '--',
-    'node', distPath
+    'node', distPath, '--stdio'
   ];
 }
 
@@ -230,7 +230,7 @@ async function main() {
   } else {
     mcpEntry = {
       command: 'node',
-      args: [distPath],
+      args: [distPath, '--stdio'],
       env: { THREADS_ACCESS_TOKEN: token }
     };
   }

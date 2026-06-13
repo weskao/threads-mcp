@@ -119,11 +119,13 @@ function cmdUseStdio() {
 
   console.log(`Registering '${MCP_NAME}' via stdio at ${distEntry} ...`);
   // Exact argv passed to claude:
-  //   mcp add --scope user threads node -- <abs-dist-path>
+  //   mcp add --scope user threads node -- <abs-dist-path> --stdio
   //
   // The `--` separator is required so that claude passes `<path>` to node as a
-  // positional argument rather than treating it as a claude flag.
-  runClaudeFatal(['mcp', 'add', '--scope', 'user', MCP_NAME, 'node', '--', distEntry]);
+  // positional argument rather than treating it as a claude flag. The trailing
+  // `--stdio` is required because the server defaults to HTTP — without it the
+  // registered "stdio" entry would boot an HTTP server the client can't speak to.
+  runClaudeFatal(['mcp', 'add', '--scope', 'user', MCP_NAME, 'node', '--', distEntry, '--stdio']);
 
   console.log(`\nSuccess. Registered '${MCP_NAME}' as stdio MCP server.`);
   console.log(`  Entry: ${distEntry}`);
