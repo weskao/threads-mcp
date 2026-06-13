@@ -3438,6 +3438,9 @@ function createServer(): Server {
 // Opt into per-IDE stdio mode with the `--stdio` CLI flag or MCP_TRANSPORT=stdio.
 // CLI flags are used in addition to env vars because env-var prefixes (`VAR=x cmd`)
 // are not portable to Windows cmd/PowerShell.
+const Transport = { Stdio: 'stdio', Http: 'http' } as const;
+type Transport = (typeof Transport)[keyof typeof Transport];
+
 const argv = process.argv.slice(2);
 const flagValue = (name: string): string | undefined => {
   const eq = argv.find((a) => a.startsWith(`${name}=`));
@@ -3445,9 +3448,20 @@ const flagValue = (name: string): string | undefined => {
   const idx = argv.indexOf(name);
   return idx >= 0 ? argv[idx + 1] : undefined;
 };
-const stdioFlag = argv.includes('--stdio') || flagValue('--transport') === 'stdio';
-const httpFlag = argv.includes('--http') || flagValue('--transport') === 'http';
-const TRANSPORT = stdioFlag ? 'stdio' : httpFlag ? 'http' : (process.env.MCP_TRANSPORT ?? 'http').toLowerCase();
+
+// Normalize legacy aliases ('sse', 'streamable-http') to Transport.Http.
+function resolveTransport(raw: string): Transport {
+  if (raw === 'http' || raw === 'sse' || raw === 'streamable-http') return Transport.Http;
+  return Transport.Stdio;
+}
+
+const stdioFlag = argv.includes('--stdio') || flagValue('--transport') === Transport.Stdio;
+const httpFlag = argv.includes('--http') || flagValue('--transport') === Transport.Http;
+const TRANSPORT: Transport = stdioFlag
+  ? Transport.Stdio
+  : httpFlag
+  ? Transport.Http
+  : resolveTransport((process.env.MCP_TRANSPORT ?? 'http').toLowerCase());
 const HTTP_HOST = flagValue('--host') ?? process.env.MCP_HTTP_HOST ?? '127.0.0.1';
 const HTTP_PORT = Number.parseInt(flagValue('--port') ?? process.env.MCP_HTTP_PORT ?? '8307', 10);
 
@@ -3576,7 +3590,7 @@ async function runHttp(): Promise<void> {
 }
 
 async function main() {
-  if (TRANSPORT === 'http' || TRANSPORT === 'sse' || TRANSPORT === 'streamable-http') {
+  if (TRANSPORT === Transport.Http) {
     await runHttp();
     // Resident process: check periodically so the token never lapses.
     scheduleTokenAutoRefresh({ recurring: true });
