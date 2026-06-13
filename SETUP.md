@@ -281,6 +281,8 @@ npm run setup-mcp
 
 若不使用腳本，以下為各用戶端的手動設定方式。
 
+> ⚠️ **stdio 設定必須加 `--stdio`**：伺服器預設為 HTTP 模式，因此 stdio 用戶端設定中的 `node …/dist/index.js` **務必在結尾加上 `--stdio`** 旗標（如下各範例），否則會啟動成 HTTP 伺服器、stdio 用戶端將無法連線。
+
 #### Claude Desktop
 
 編輯 Claude Desktop 設定檔：
@@ -298,7 +300,7 @@ npm run setup-mcp
       "command": "sh",
       "args": [
         "-c",
-        "THREADS_ACCESS_TOKEN=$(security find-generic-password -a \"$USER\" -s \"threads-access-token\" -w 2>/dev/null) node \"/path/to/threads-mcp/dist/index.js\""
+        "THREADS_ACCESS_TOKEN=$(security find-generic-password -a \"$USER\" -s \"threads-access-token\" -w 2>/dev/null) node \"/path/to/threads-mcp/dist/index.js\" --stdio"
       ]
     }
   }
@@ -316,7 +318,7 @@ npm run setup-mcp
       "command": "powershell",
       "args": [
         "-Command",
-        "$env:THREADS_ACCESS_TOKEN=((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', 'threads-access-token')).Password; node \"C:/path/to/threads-mcp/dist/index.js\""
+        "$env:THREADS_ACCESS_TOKEN=((New-Object Windows.Security.Credentials.PasswordVault).Retrieve('threads-mcp', 'threads-access-token')).Password; node \"C:/path/to/threads-mcp/dist/index.js\" --stdio"
       ]
     }
   }
@@ -330,7 +332,7 @@ npm run setup-mcp
   "mcpServers": {
     "threads": {
       "command": "node",
-      "args": ["/path/to/threads-mcp/dist/index.js"],
+      "args": ["/path/to/threads-mcp/dist/index.js", "--stdio"],
       "env": {
         "THREADS_ACCESS_TOKEN": "your_token_here"
       }
@@ -352,11 +354,11 @@ npm run setup-mcp
 
 ## 🖥️ 第五階段（進階）：常駐 HTTP 伺服器模式（多 IDE 共用・開機自動啟動）
 
-預設的 **stdio 模式**下，每個 IDE／Claude 視窗都會各自啟動一份 `threads-mcp` 子行程。同時開很多視窗時，會出現多份重複行程佔用記憶體。
+**伺服器預設以常駐 HTTP（Streamable HTTP）模式啟動**：整台機器只跑**一個**行程，所有 IDE 透過 `http://127.0.0.1:8307/mcp` 共用它，並支援開機自動啟動、崩潰自動重啟。
 
-改用 **常駐 HTTP（Streamable HTTP）伺服器**後，整台機器只跑**一個**行程，所有 IDE 透過 `http://127.0.0.1:8307/mcp` 共用它，並支援開機自動啟動、崩潰自動重啟。
+若改用 **stdio 模式**（以 `--stdio` 旗標或 `MCP_TRANSPORT=stdio` 啟用），每個 IDE／Claude 視窗會各自啟動一份 `threads-mcp` 子行程；同時開很多視窗時，會出現多份重複行程佔用記憶體。
 
-> stdio 仍是預設模式，不做以下設定就維持原本行為，兩種模式可並存。
+> ⚠️ **破壞性變更**：舊版預設為 stdio，現已改為 HTTP。原本以 `node dist/index.js`（不帶旗標）啟動的設定，現在會走 HTTP 模式；要維持 stdio 請加上 `--stdio`（見下方第 3、5 節）。兩種模式可並存。
 
 ### 1. 一鍵安裝（自動偵測作業系統）
 
@@ -394,9 +396,9 @@ npm run uninstall-autostart
 > 💡 **先確認目前是哪種模式**：切換前可先查 user-scope 設定的 transport（`stdio` 或 `http`）：
 >
 > ```bash
-> claude mcp get threads
-> # 或用 Makefile 捷徑：
-> make config-check
+> npm run config-check          # 跨平台（含 Windows）
+> # 或直接： claude mcp get threads
+> # macOS/Linux 捷徑： make config-check
 > ```
 
 安裝腳本結束時會印出登記指令。**切換至 HTTP 模式：**
@@ -406,27 +408,30 @@ npm run uninstall-autostart
 # 切換模式務必「先 remove 再 add」：
 claude mcp remove threads -s user
 claude mcp add --transport http --scope user threads http://127.0.0.1:8307/mcp
-# 或用 Makefile 捷徑（已內建先 remove 再 add）：
-make use-http
+# 或用跨平台 npm 捷徑（已內建先 remove 再 add，Windows 亦適用）：
+npm run use-http
+# macOS/Linux 也可： make use-http
 ```
 
 **切回 stdio 模式（每個 IDE 各自啟動）：**
 
 ```bash
 claude mcp remove --scope user threads
-claude mcp add --scope user threads node -- /path/to/threads-mcp/dist/index.js
-# 或用 Makefile 捷徑：
-make use-stdio
+claude mcp add --scope user threads node -- /path/to/threads-mcp/dist/index.js --stdio
+# 或用跨平台 npm 捷徑：
+npm run use-stdio
+# macOS/Linux 也可： make use-stdio
 ```
 
 > 🧹 **切到 HTTP 後清掉殘留的 stdio 行程**：切換前各 IDE 各自啟動的 stdio 子行程不會自動結束，可用：
 >
 > ```bash
-> make ps-check    # 先看有哪些行程（保留 --http 那個常駐行程）
-> make kill-stale  # 清掉所有 stdio 行程，只留 --http 常駐行程
+> npm run ps-check    # 先看有哪些行程（保留 --http 那個常駐行程）
+> npm run kill-stale  # 清掉所有 stdio 行程，只留 --http 常駐行程
+> # macOS/Linux 也可： make ps-check / make kill-stale
 > ```
 >
-> ⚠️ 這些 stdio 行程是各編輯器（VSCode／Antigravity／Windsurf…）目前執行中的 Claude Code **各自 spawn** 的。若該編輯器的 MCP 設定還沒切到 HTTP，下次重連／重開時仍會再 spawn 一個新的 stdio 行程。要根治請先 `make use-http` 並重啟編輯器，`kill-stale` 只是清當下殘留。
+> ⚠️ 這些 stdio 行程是各編輯器（VSCode／Antigravity／Windsurf…）目前執行中的 Claude Code **各自 spawn** 的。若該編輯器的 MCP 設定還沒切到 HTTP，下次重連／重開時仍會再 spawn 一個新的 stdio 行程。要根治請先 `npm run use-http`（或 `make use-http`）並重啟編輯器，`kill-stale` 只是清當下殘留。
 
 或手動加入 `~/.claude.json` 的 `mcpServers`（HTTP 模式）：
 
@@ -448,19 +453,29 @@ make use-stdio
 ```bash
 npm run start:http
 # 等同於： node dist/index.js --http --port 8307 --host 127.0.0.1
+# stdio 模式： npm run start:stdio   （等同 node dist/index.js --stdio）
 ```
 
 ### 4. Token 來源（常駐模式建議使用金鑰庫）
 
 常駐服務解析 Token 的順序：先嘗試系統金鑰庫（macOS Keychain／Linux Secret Service／Windows PasswordVault），找不到再讀取專案 `.env`（以模組路徑解析，不依賴工作目錄）。
 
-> 💡 **macOS 注意**：launchd 服務存取 `~/Documents` 底下的檔案可能受系統隱私權限（TCC）限制，導致讀不到 `.env`。建議常駐模式以金鑰庫存放 Token（執行 `npm run get-token` 時選擇「存入系統安全儲存區」），Token 會透過環境變數注入，不受工作目錄與 TCC 影響。
+> 💡 **macOS 注意（TCC 隱私權限）**：launchd 背景服務無法存取 `~/Documents` 等受 TCC 保護的目錄，若 plist 的 `WorkingDirectory` 或 `StandardErrorPath` 指向 `~/Documents`，服務會以 `EX_CONFIG` (78) 立即退出，且不寫任何日誌。`npm run install-autostart` 已在安裝時自動使用 TCC 安全路徑（工作目錄 `$HOME`，日誌寫至 `~/Library/Logs/threads-mcp/`），因此 **全新安裝不受此問題影響**。
+>
+> 若您的 plist 是在修正前產生（服務無法啟動、日誌空白），重新執行即可修復：
+>
+> ```bash
+> npm run install-autostart
+> ```
+>
+> 另外，建議以金鑰庫存放 Token（`npm run get-token` 時選「存入系統安全儲存區」），Token 透過環境變數注入，不依賴 `.env` 檔案路徑。
 
 ### 5. 設定參數對照
 
 | CLI 旗標 | 環境變數 | 預設值 | 說明 |
 | ---------- | ---------- | -------- | ------ |
-| `--http` 或 `--transport http` | `MCP_TRANSPORT=http` | （未設定＝stdio） | 啟用常駐 HTTP 模式 |
+| `--http` 或 `--transport http` | `MCP_TRANSPORT=http` | **預設**（未帶旗標即此模式） | 常駐 HTTP 模式（多 IDE 共用） |
+| `--stdio` 或 `--transport stdio` | `MCP_TRANSPORT=stdio` | — | 切回 stdio 模式（每個 IDE 各自啟動） |
 | `--port <n>` | `MCP_HTTP_PORT` | `8307` | 監聽埠號 |
 | `--host <h>` | `MCP_HTTP_HOST` | `127.0.0.1` | 監聽位址（僅限本機） |
 
@@ -468,24 +483,28 @@ npm run start:http
 >
 > CLI 旗標與環境變數皆可使用；因 `VAR=value cmd` 前綴語法在 Windows 不通用，跨平台情境建議優先用 CLI 旗標。
 
-### 6. Makefile 快捷指令（macOS）
+### 6. 跨平台指令對照（`npm run` 為主・`make` 為輔）
 
-專案提供 `Makefile`，將常用操作整合為單一指令（執行 `make` 或 `make list` 可列出所有目標）：
+所有平台特定邏輯都集中在 `scripts/` 下的 Node 腳本，並以 **`npm run …` 作為跨平台主要入口（macOS / Linux / Windows 皆適用）**。`Makefile` 只是 **macOS / Linux 的便利別名層**，每個目標都僅是轉呼對應的 `npm run`；**Windows 使用者（無 `make`／POSIX shell）直接使用左欄的 `npm run` 指令即可**。
 
-| 指令 | 說明 |
-| ---- | ---- |
-| `make install-service` | build + 安裝 launchd 服務 + 立即啟動（一次完成） |
-| `make uninstall-service` | 停止並移除 launchd 服務 |
-| `make service-start` | 啟動服務（同 `thmcp_load`） |
-| `make service-stop` | 停止服務（同 `thmcp_unload`） |
-| `make service-status` | 確認服務在 `:8307` 上運行（同 `thmcp_check`） |
-| `make ps-check` | 列出所有 threads-mcp 行程（PID、PPID、記憶體），偵測殭屍或重複 stdio 行程 |
-| `make kill-stale` | 清掉所有 stdio 殘留行程，只保留 `--http` 常駐行程 |
-| `make config-check` | 顯示目前 Claude user-scope 的 threads 設定（確認 stdio／http） |
-| `make use-http` | Claude config 切換至 HTTP 模式（先 remove 再 add） |
-| `make use-stdio` | Claude config 切回 stdio 模式 |
-| `make start-http` | 前景啟動 HTTP 伺服器（不安裝服務） |
-| `make build` | 編譯 TypeScript → `dist/` |
+| 操作 | 跨平台（`npm run …`） | macOS/Linux 捷徑（`make …`） |
+| ---- | ---- | ---- |
+| build + 安裝並啟動常駐服務 | `npm run install-autostart` | `make install-service` |
+| 移除常駐服務 | `npm run uninstall-autostart` | `make uninstall-service` |
+| 啟動常駐服務 | `npm run service-start` | `make service-start` |
+| 停止常駐服務 | `npm run service-stop` | `make service-stop` |
+| 服務狀態（含 `:8307` 監聽） | `npm run service-status` | `make service-status` |
+| 列出 threads-mcp 行程（偵測殭屍／重複 stdio） | `npm run ps-check` | `make ps-check` |
+| 清掉 stdio 殘留行程（保留 `--http` 常駐） | `npm run kill-stale` | `make kill-stale` |
+| 顯示目前 Claude 的 threads 設定（stdio／http） | `npm run config-check` | `make config-check` |
+| 切換 Claude config 至 HTTP（先 remove 再 add） | `npm run use-http` | `make use-http` |
+| 切回 Claude config 至 stdio | `npm run use-stdio` | `make use-stdio` |
+| 前景啟動 HTTP 伺服器 | `npm run start:http` | `make start-http` |
+| 前景啟動 stdio 伺服器 | `npm run start:stdio` | `make start-stdio` |
+| 編譯 TypeScript → `dist/` | `npm run build` | `make build` |
+| 刪除 `dist/`（跨平台） | `npm run clean` | `make clean` |
+
+> 💡 `make`（或 `make list`）可列出所有 macOS/Linux 捷徑目標；它們與上表左欄的 `npm run` 等價。
 
 ---
 
