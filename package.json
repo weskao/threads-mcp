@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "start:http": "node dist/index.js --http",
@@ -25,6 +25,15 @@
     "setup-mcp": "node scripts/setup_mcp.js",
     "install-autostart": "node scripts/install-autostart.js",
     "uninstall-autostart": "node scripts/install-autostart.js --uninstall",
+    "service-status": "node scripts/install-autostart.js --status",
+    "service-start": "node scripts/install-autostart.js --start",
+    "service-stop": "node scripts/install-autostart.js --stop",
+    "ps-check": "node scripts/ps.js check",
+    "kill-stale": "node scripts/ps.js kill-stale",
+    "config-check": "node scripts/mcp-config.js check",
+    "use-http": "node scripts/mcp-config.js use-http",
+    "use-stdio": "node scripts/mcp-config.js use-stdio",
+    "notify": "node scripts/notify.js",
     "ngrok-images": "ngrok http 3456"
   },
   "keywords": [
