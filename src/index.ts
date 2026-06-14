@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
 import { ThreadsAPIClient } from './api/client.js';
-import { LocalFileServer } from './api/local-file-server.js';
+import { LocalFileServer, LOCAL_FILE_SERVER_DEFAULT_PORT } from './api/local-file-server.js';
 
 // Load .env from the project root resolved relative to this module, not the
 // process CWD. A resident server launched by launchd/systemd/Task Scheduler may
@@ -1138,7 +1138,7 @@ const listToolsHandler = async () => {
             },
             port: {
               type: 'number',
-              description: 'HTTP server port used to serve the file (default: 3456)',
+              description: `HTTP server port used to serve the file (default: ${LOCAL_FILE_SERVER_DEFAULT_PORT}, overridden by LOCAL_IMAGE_SERVER_PORT env var)`,
             },
             alt_text: {
               type: 'string',
@@ -3330,7 +3330,7 @@ add_action('publish_post', 'auto_crosspost_to_threads');
           );
         }
 
-        const server = new LocalFileServer(localImagePort ?? 3456);
+        const server = new LocalFileServer(localImagePort ?? LOCAL_IMAGE_PORT);
         let imageUrl: string;
 
         try {
@@ -3464,6 +3464,10 @@ const TRANSPORT: Transport = stdioFlag
   : resolveTransport((process.env.MCP_TRANSPORT ?? 'http').toLowerCase());
 const HTTP_HOST = flagValue('--host') ?? process.env.MCP_HTTP_HOST ?? '127.0.0.1';
 const HTTP_PORT = Number.parseInt(flagValue('--port') ?? process.env.MCP_HTTP_PORT ?? '8307', 10);
+const LOCAL_IMAGE_PORT = Number.parseInt(
+  process.env.LOCAL_IMAGE_SERVER_PORT ?? String(LOCAL_FILE_SERVER_DEFAULT_PORT),
+  10,
+);
 
 // DNS-rebinding protection. Binding to loopback is NOT sufficient on its own: a
 // malicious web page can make the victim's own browser POST to 127.0.0.1, so the

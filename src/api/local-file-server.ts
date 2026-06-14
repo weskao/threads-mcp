@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+/** Default TCP port for the local file server. */
+export const LOCAL_FILE_SERVER_DEFAULT_PORT = 51847;
+
 /**
  * Maps common media file extensions to their MIME types.
  */
@@ -86,9 +89,9 @@ export class LocalFileServer {
   url: string | null = null;
 
   /**
-   * @param port - TCP port to listen on. Defaults to `3456`.
+   * @param port - TCP port to listen on. Defaults to `LOCAL_FILE_SERVER_DEFAULT_PORT`.
    */
-  constructor(port: number = 3456) {
+  constructor(port: number = LOCAL_FILE_SERVER_DEFAULT_PORT) {
     this.port = port;
   }
 
@@ -145,7 +148,7 @@ export class LocalFileServer {
         reject(err);
       });
 
-      server.listen(this.port, () => {
+      server.listen(this.port, '127.0.0.1', () => {
         this.server = server;
         void detectNgrokUrl(this.port).then((ngrokBase) => {
           if (ngrokBase) {
