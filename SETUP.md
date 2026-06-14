@@ -516,12 +516,12 @@ npm run start:http
 
 ### 運作原理
 
-工具在背景啟動一個暫時的本地 HTTP server（預設 port `3456`），將圖片以 URL 形式提供給 Threads API 存取，貼文完成後自動關閉 server。
+工具在背景啟動一個暫時的本地 HTTP server（預設 port `51847`），將圖片以 URL 形式提供給 Threads API 存取，貼文完成後自動關閉 server。
 
 * 支援格式：`.jpg` / `.jpeg` / `.png` / `.gif` / `.webp`（圖片）、`.mp4` / `.mov`（影片）
 * 路徑必須是**絕對路徑**（如 `/Users/<username>/Pictures/photo.jpg`）
 
-> ⚠️ **前置條件**：Threads 伺服器必須能從外部網路存取您本機的 port `3456`。
+> ⚠️ **前置條件**：Threads 伺服器必須能從外部網路存取您本機的 port `51847`。
 > 若您在 NAT / 防火牆後方（一般家用或公司網路均屬此類），需先透過 **ngrok** 建立對外 tunnel——伺服器會自動偵測並使用 ngrok 提供的公開 URL。
 
 ### 設定 ngrok（NAT / 防火牆環境必做）
@@ -551,13 +551,13 @@ npm run start:http
 
 ```bash
 make ngrok-images
-# 等同於：ngrok http 3456
+# 等同於：ngrok http 127.0.0.1:51847
 ```
 
 ngrok 啟動後會顯示類似：
 
 ```text
-Forwarding  https://xxxx-xx-xxx.ngrok-free.app -> http://localhost:3456
+Forwarding  https://xxxx-xx-xxx.ngrok-free.app -> http://127.0.0.1:51847
 ```
 
 **不需要複製或手動設定此 URL**——工具會自動查詢 ngrok 本地 API（`127.0.0.1:4040`）並使用對外公開的 HTTPS URL。

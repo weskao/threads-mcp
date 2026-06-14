@@ -17,7 +17,7 @@ cannot fetch the image.
   URL) and pass that URL to the Threads API instead of serving from localhost.
 - Use a base64 data URI if/when the Threads API ever supports it.
 
-**Current workaround (implemented):** run `make ngrok-images` (or `ngrok http 3456`) before
+**Current workaround (implemented):** run `make ngrok-images` (or `ngrok http 127.0.0.1:51847`) before
 using `publish_thread_local_image`. The server automatically queries the ngrok local API at
 `127.0.0.1:4040` and uses the public HTTPS URL — no manual copy/paste required. Setup steps
 are documented in SETUP.md under "🖼️ 進階功能：本地圖片／影片貼文".
