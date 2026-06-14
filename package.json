@@ -34,7 +34,7 @@
     "use-http": "node scripts/mcp-config.js use-http",
     "use-stdio": "node scripts/mcp-config.js use-stdio",
     "notify": "node scripts/notify.js",
-    "ngrok-images": "ngrok http 127.0.0.1:51847"
+    "ngrok-images": "node scripts/ngrok-images.js"
   },
   "keywords": [
     "mcp",
