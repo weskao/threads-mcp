@@ -3369,10 +3369,27 @@ add_action('publish_post', 'auto_crosspost_to_threads');
             throw new Error('Failed to create media container for local image');
           }
 
-          // Step 2: Publish the container
+          // Step 2: Poll until the container is FINISHED (image fetch + processing)
+          const containerId = localImageContainerResponse.id;
+          const pollStart = Date.now();
+          const POLL_TIMEOUT_MS = 60_000;
+          const POLL_INTERVAL_MS = 3_000;
+          while (true) {
+            const statusRes: any = await apiClient.get(`/${containerId}`, { fields: 'status,error_message' });
+            if (statusRes.status === 'FINISHED') break;
+            if (statusRes.status === 'ERROR') {
+              throw new Error(`Media container processing failed: ${statusRes.error_message ?? 'unknown'}`);
+            }
+            if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+              throw new Error(`Timed out waiting for media container (status: ${statusRes.status})`);
+            }
+            await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS));
+          }
+
+          // Step 3: Publish the container
           const localImagePublishResponse: any = await apiClient.post(
             `/${userForLocalImage.id}/threads_publish`,
-            { creation_id: localImageContainerResponse.id }
+            { creation_id: containerId }
           );
 
           result = {
