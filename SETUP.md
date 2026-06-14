@@ -528,39 +528,71 @@ npm run start:http
 
 #### 1. 安裝 ngrok
 
-* **macOS（Homebrew，推薦）**：
+* **macOS（Homebrew，推薦）**：官方指南 [macOS Setup](https://dashboard.ngrok.com/get-started/setup/mac-os)
 
   ```bash
   brew install ngrok
   ```
 
-* **其他平台**：前往 [ngrok 官網下載頁](https://ngrok.com/download) 安裝。
+* **Windows**：請參閱官方指南 [Windows Setup](https://dashboard.ngrok.com/get-started/setup/windows)
+
+* **Linux**：請參閱官方指南 [Linux Setup](https://dashboard.ngrok.com/get-started/setup/linux)
 
 #### 2. 設定 authtoken（僅需一次）
 
-1. 前往 [ngrok Dashboard → Your Authtoken](https://dashboard.ngrok.com/get-started/your-authtoken) 取得您的 authtoken。
-2. 執行以下指令完成綁定：
+前往 [ngrok Dashboard → Your Authtoken](https://dashboard.ngrok.com/get-started/your-authtoken) 取得您的 authtoken，再擇一方式設定：
 
-   ```bash
-   ngrok config add-authtoken <your_authtoken>
-   ```
+##### 方式 A：寫入全域 ngrok.yml（最簡單，建議）
+
+```bash
+ngrok config add-authtoken <your_authtoken>
+```
+
+執行後 authtoken 永久寫入 `~/.config/ngrok/ngrok.yml`（ngrok 的全域使用者設定，非本專案目錄），之後無需重複設定。
+
+##### 方式 B：環境變數 `NGROK_AUTHTOKEN`（與本專案 Token 管理方式一致）
+
+ngrok 原生支援 `NGROK_AUTHTOKEN` 環境變數——有設定時可完全取代 `add-authtoken`。`.env.example` 中已提供各平台的金鑰庫讀取範本；將對應的那行複製到 `.env`，並在啟動 tunnel 前 `source .env`：
+
+```bash
+# 1. 存入金鑰庫（僅此一次）
+# macOS：
+security add-generic-password -a "$USER" -s "ngrok-authtoken" -w "<your_authtoken>"
+
+# 2. 複製 .env.example 中對應的那行至 .env，然後：
+source .env && npm run ngrok-images
+```
 
 #### 3. 每次使用前：啟動 tunnel
 
 在另一個終端機視窗執行（**與發佈圖片的工具同時保持開啟**）：
 
 ```bash
-make ngrok-images
-# 等同於：ngrok http 127.0.0.1:51847
+npm run ngrok-images
+# macOS/Linux 也可： make ngrok-images
 ```
 
-ngrok 啟動後會顯示類似：
+此指令會自動從 `.env` 的 `LOCAL_IMAGE_SERVER_PORT` 讀取埠號（未設定時用預設 `51847`），並**固定轉發到 IPv4 的 `127.0.0.1`**（避免 `localhost` 被解析成 IPv6 `::1` 而連線失敗）。ngrok 啟動後會顯示類似：
 
 ```text
 Forwarding  https://xxxx-xx-xxx.ngrok-free.app -> http://127.0.0.1:51847
 ```
 
 **不需要複製或手動設定此 URL**——工具會自動查詢 ngrok 本地 API（`127.0.0.1:4040`）並使用對外公開的 HTTPS URL。
+
+> ⚠️ **請勿用瀏覽器直接打開這個 ngrok URL 來「測試」。** 本地圖片伺服器（port `51847`）**只在 `publish_thread_local_image` 工具執行的那幾秒**才啟動，貼文完成後立即關閉。沒有發文進行時，該埠上沒有任何服務，瀏覽器只會得到 `ERR_NGROK_8012`／`connection refused`——**這是正常現象，不代表設定錯誤**。正確的驗證方式是直接走下方第 4 步透過 Claude 發文，工具回傳的 `image_url_used` 欄位即為證明。
+>
+> ![ERR_NGROK_8012 — 瀏覽器直接打開 ngrok URL 時的預期畫面，非設定錯誤](docs/images/ngrok_err_8012_expected.png)
+
+##### 靜態域名（選用）
+
+ngrok 免費方案提供一個固定域名（Static Domain）。若您已有靜態域名，在 `.env` 加入：
+
+```bash
+NGROK_URL=your-static-domain.ngrok-free.dev
+```
+
+`npm run ngrok-images` 會自動偵測並以 `--url=<domain>` 啟動，無需手動傳參。
 
 #### 4. 使用工具
 
