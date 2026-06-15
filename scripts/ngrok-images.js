@@ -6,8 +6,9 @@
 //   2. LOCAL_IMAGE_SERVER_PORT in the project .env file
 //   3. Default 51847 (matches LOCAL_FILE_SERVER_DEFAULT_PORT)
 //
-// Static domain (optional): set NGROK_URL=your-static-domain.ngrok-free.dev in .env
-// or as an environment variable to pass --url=<domain> to ngrok.
+// Static domain (optional): set NGROK_URL in .env or as an environment variable.
+// Accepts a plain hostname or a full URL (https:// prefix and trailing slash are
+// stripped automatically before the value is passed to ngrok --url).
 //
 // The tunnel always forwards to 127.0.0.1 (IPv4). Forwarding to "localhost"
 // can resolve to IPv6 (::1) on some systems, which fails with connection
