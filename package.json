@@ -34,7 +34,9 @@
     "use-http": "node scripts/mcp-config.js use-http",
     "use-stdio": "node scripts/mcp-config.js use-stdio",
     "notify": "node scripts/notify.js",
-    "ngrok-images": "node scripts/ngrok-images.js"
+    "ngrok-images": "node scripts/ngrok-images.js",
+    "install-ngrok-autostart": "node scripts/install-autostart.js --ngrok-only",
+    "uninstall-ngrok-autostart": "node scripts/install-autostart.js --uninstall --ngrok-only"
   },
   "keywords": [
     "mcp",

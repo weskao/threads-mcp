@@ -48,6 +48,12 @@ const LABEL_REFRESH = 'com.threads-mcp.token-refresh'; // macOS launchd label
 const UNIT_REFRESH = 'threads-mcp-token-refresh'; // Linux systemd unit/timer base name
 const TASK_REFRESH = 'ThreadsMcpTokenRefresh'; // Windows scheduled-task name
 
+// Optional ngrok tunnel: keeps a persistent tunnel open so publish_thread_local_image
+// works without manually starting ngrok before each use.
+const LABEL_NGROK = 'com.threads-mcp.ngrok'; // macOS launchd label
+const UNIT_NGROK = 'threads-mcp-ngrok';       // Linux systemd unit name
+const TASK_NGROK = 'ThreadsMcpNgrok';         // Windows scheduled-task name
+
 // --- args ---------------------------------------------------------------------
 const args = process.argv.slice(2);
 const argVal = (name, def) => {
@@ -60,6 +66,7 @@ const uninstall = args.includes('--uninstall');
 const statusMode = args.includes('--status');
 const startMode = args.includes('--start');
 const stopMode = args.includes('--stop');
+const ngrokOnly = args.includes('--ngrok-only');
 const port = argVal('--port', process.env.MCP_HTTP_PORT || '8307');
 const host = argVal('--host', process.env.MCP_HTTP_HOST || '127.0.0.1');
 
@@ -186,6 +193,68 @@ function macUninstall() {
   if (fs.existsSync(plistPath)) fs.rmSync(plistPath);
   console.log(`✓ 已移除 launchd agent：${plistPath}`);
   macUninstallRefresh();
+  macUninstallNgrok();
+}
+
+// ---- macOS: ngrok tunnel autostart ----
+function macNgrokPlistPath() {
+  return path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL_NGROK}.plist`);
+}
+function macNgrokCommand() {
+  // Set an expanded PATH so launchd's restricted env can find ngrok (Homebrew ARM/Intel, MacPorts).
+  const expandedPath =
+    '/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+  return (
+    `export PATH="${expandedPath}"; ` +
+    `exec "${nodeBin}" "${path.join(projectRoot, 'scripts', 'ngrok-images.js')}"`
+  );
+}
+function macInstallNgrok() {
+  fs.mkdirSync(macLogDir, { recursive: true });
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL_NGROK}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>${macNgrokCommand().replace(/&/g, '&amp;').replace(/</g, '&lt;')}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${projectRoot}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${path.join(macLogDir, 'ngrok.out.log')}</string>
+  <key>StandardErrorPath</key>
+  <string>${path.join(macLogDir, 'ngrok.err.log')}</string>
+</dict>
+</plist>
+`;
+  const plistPath = macNgrokPlistPath();
+  fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+  fs.writeFileSync(plistPath, plist, 'utf8');
+  const uid = process.getuid();
+  runQuiet('launchctl', ['bootout', `gui/${uid}/${LABEL_NGROK}`]);
+  run('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  runQuiet('launchctl', ['enable', `gui/${uid}/${LABEL_NGROK}`]);
+  runQuiet('launchctl', ['kickstart', '-k', `gui/${uid}/${LABEL_NGROK}`]);
+  console.log(`✓ 已安裝 ngrok tunnel 自動啟動：${plistPath}`);
+  console.log('  ngrok 將在登入後自動啟動，publish_thread_local_image 可直接使用（無需手動啟動）');
+}
+function macUninstallNgrok() {
+  const plistPath = macNgrokPlistPath();
+  const uid = process.getuid();
+  runQuiet('launchctl', ['bootout', `gui/${uid}/${LABEL_NGROK}`]);
+  if (fs.existsSync(plistPath)) {
+    fs.rmSync(plistPath);
+    console.log(`✓ 已移除 ngrok tunnel 自動啟動：${plistPath}`);
+  }
 }
 function macRefreshPlistPath() {
   return path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL_REFRESH}.plist`);
@@ -328,6 +397,7 @@ function linuxUninstall() {
   runQuiet('systemctl', ['--user', 'daemon-reload']);
   console.log(`✓ 已移除 systemd user service：${unitPath}`);
   linuxUninstallRefresh();
+  linuxUninstallNgrok();
 }
 function linuxRefreshDir() {
   return path.join(os.homedir(), '.config', 'systemd', 'user');
@@ -369,6 +439,45 @@ function linuxUninstallRefresh() {
   }
   runQuiet('systemctl', ['--user', 'daemon-reload']);
   console.log(`✓ 已移除 token 續期排程：${UNIT_REFRESH}.timer`);
+}
+
+// ---- Linux: ngrok tunnel autostart ----
+function linuxNgrokUnitPath() {
+  return path.join(os.homedir(), '.config', 'systemd', 'user', `${UNIT_NGROK}.service`);
+}
+function linuxInstallNgrok() {
+  const ngrokImagesScript = path.join(projectRoot, 'scripts', 'ngrok-images.js');
+  const unit = `[Unit]
+Description=ngrok tunnel for Threads MCP local image server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${projectRoot}
+ExecStart=/bin/sh -c 'export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"; exec "${nodeBin}" "${ngrokImagesScript}"'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`;
+  const unitPath = linuxNgrokUnitPath();
+  fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+  fs.writeFileSync(unitPath, unit, 'utf8');
+  run('systemctl', ['--user', 'daemon-reload']);
+  run('systemctl', ['--user', 'enable', '--now', `${UNIT_NGROK}.service`]);
+  console.log(`✓ 已安裝 ngrok tunnel systemd service：${unitPath}`);
+  console.log('  ngrok 將在登入後自動啟動，publish_thread_local_image 可直接使用');
+}
+function linuxUninstallNgrok() {
+  const unitPath = linuxNgrokUnitPath();
+  runQuiet('systemctl', ['--user', 'disable', '--now', `${UNIT_NGROK}.service`]);
+  if (fs.existsSync(unitPath)) {
+    fs.rmSync(unitPath);
+    runQuiet('systemctl', ['--user', 'daemon-reload']);
+    console.log(`✓ 已移除 ngrok tunnel systemd service：${unitPath}`);
+  }
 }
 
 // ---- Linux: service control (status/start/stop) ----
@@ -430,6 +539,7 @@ function windowsUninstall() {
   ]);
   console.log(`✓ 已移除 Windows 排程工作：${TASK}`);
   windowsUninstallRefresh();
+  windowsUninstallNgrok();
 }
 function windowsInstallRefresh() {
   // Weekly trigger; node runs the refresh script directly (keychain read is internal).
@@ -450,6 +560,35 @@ function windowsUninstallRefresh() {
     `Stop-ScheduledTask -TaskName '${TASK_REFRESH}' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName '${TASK_REFRESH}' -Confirm:$false -ErrorAction SilentlyContinue`,
   ]);
   console.log(`✓ 已移除 token 續期排程：${TASK_REFRESH}`);
+}
+
+// ---- Windows: ngrok tunnel autostart ----
+function windowsInstallNgrok() {
+  const ngrokImagesScript = path.join(projectRoot, 'scripts', 'ngrok-images.js');
+  const inner = (
+    `Set-Location '${projectRoot.replace(/'/g, "''")}'; ` +
+    `& '${nodeBin.replace(/'/g, "''")}' '${ngrokImagesScript.replace(/'/g, "''")}'`
+  ).replace(/'/g, "''");
+  const ps = [
+    `$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -WindowStyle Hidden -Command "& {${inner}}"' -WorkingDirectory '${projectRoot.replace(/'/g, "''")}'`,
+    `$trigger = New-ScheduledTaskTrigger -AtLogOn`,
+    `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)`,
+    `Register-ScheduledTask -TaskName '${TASK_NGROK}' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null`,
+    `Start-ScheduledTask -TaskName '${TASK_NGROK}'`,
+  ].join('; ');
+  run('powershell', ['-NoProfile', '-Command', ps]);
+  console.log(`✓ 已註冊 Windows 排程工作：${TASK_NGROK} (登入時自動啟動)`);
+  console.log('  ngrok 將在登入後自動啟動，publish_thread_local_image 可直接使用');
+}
+function windowsUninstallNgrok() {
+  const { ok } = runCapture('schtasks', ['/Query', '/TN', TASK_NGROK]);
+  if (!ok) return;
+  runQuiet('powershell', [
+    '-NoProfile',
+    '-Command',
+    `Stop-ScheduledTask -TaskName '${TASK_NGROK}' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName '${TASK_NGROK}' -Confirm:$false -ErrorAction SilentlyContinue`,
+  ]);
+  console.log(`✓ 已移除 ngrok tunnel 排程工作：${TASK_NGROK}`);
 }
 
 // ---- Windows: service control (status/start/stop) ----
@@ -487,10 +626,17 @@ async function main() {
   const plat = process.platform;
   try {
     if (uninstall) {
-      if (plat === 'darwin') macUninstall();
-      else if (plat === 'linux') linuxUninstall();
-      else if (plat === 'win32') windowsUninstall();
-      else throw new Error(`不支援的平台：${plat}`);
+      if (ngrokOnly) {
+        if (plat === 'darwin') macUninstallNgrok();
+        else if (plat === 'linux') linuxUninstallNgrok();
+        else if (plat === 'win32') windowsUninstallNgrok();
+        else throw new Error(`不支援的平台：${plat}`);
+      } else {
+        if (plat === 'darwin') macUninstall();
+        else if (plat === 'linux') linuxUninstall();
+        else if (plat === 'win32') windowsUninstall();
+        else throw new Error(`不支援的平台：${plat}`);
+      }
       return;
     }
     if (statusMode) {
@@ -511,6 +657,13 @@ async function main() {
       if (plat === 'darwin') macStop();
       else if (plat === 'linux') linuxStop();
       else if (plat === 'win32') windowsStop();
+      else throw new Error(`不支援的平台：${plat}`);
+      return;
+    }
+    if (ngrokOnly) {
+      if (plat === 'darwin') macInstallNgrok();
+      else if (plat === 'linux') linuxInstallNgrok();
+      else if (plat === 'win32') windowsInstallNgrok();
       else throw new Error(`不支援的平台：${plat}`);
       return;
     }
