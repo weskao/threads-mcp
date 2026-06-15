@@ -487,24 +487,24 @@ npm run start:http
 
 所有平台特定邏輯都集中在 `scripts/` 下的 Node 腳本，並以 **`npm run …` 作為跨平台主要入口（macOS / Linux / Windows 皆適用）**。`Makefile` 只是 **macOS / Linux 的便利別名層**，每個目標都僅是轉呼對應的 `npm run`；**Windows 使用者（無 `make`／POSIX shell）直接使用左欄的 `npm run` 指令即可**。
 
-| 操作                                           | 跨平台（`npm run …`）         | macOS/Linux 捷徑（`make …`） |
-| ---------------------------------------------- | ----------------------------- | ---------------------------- |
-| build + 安裝並啟動常駐服務                     | `npm run install-autostart`   | `make install-service`       |
-| 移除常駐服務                                   | `npm run uninstall-autostart` | `make uninstall-service`     |
-| 啟動常駐服務                                   | `npm run service-start`       | `make service-start`         |
-| 停止常駐服務                                   | `npm run service-stop`        | `make service-stop`          |
-| 服務狀態（含 `:8307` 監聽）                    | `npm run service-status`      | `make service-status`        |
-| 列出 threads-mcp 行程（偵測殭屍／重複 stdio）  | `npm run ps-check`            | `make ps-check`              |
-| 清掉 stdio 殘留行程（保留 `--http` 常駐）      | `npm run kill-stale`          | `make kill-stale`            |
-| 顯示目前 Claude 的 threads 設定（stdio／http） | `npm run config-check`        | `make config-check`          |
-| 切換 Claude config 至 HTTP（先 remove 再 add） | `npm run use-http`            | `make use-http`              |
-| 切回 Claude config 至 stdio                    | `npm run use-stdio`           | `make use-stdio`             |
-| 前景啟動 HTTP 伺服器                           | `npm run start:http`          | `make start-http`            |
-| 前景啟動 stdio 伺服器                          | `npm run start:stdio`         | `make start-stdio`           |
-| 安裝 ngrok tunnel 開機自動啟動                 | `npm run install-ngrok-autostart`   | —                      |
-| 移除 ngrok tunnel 自動啟動                     | `npm run uninstall-ngrok-autostart` | —                      |
-| 編譯 TypeScript → `dist/`                      | `npm run build`               | `make build`                 |
-| 刪除 `dist/`（跨平台）                         | `npm run clean`               | `make clean`                 |
+| 操作                                           | 跨平台（`npm run …`）                   | macOS/Linux 捷徑（`make …`） |
+| ---------------------------------------------- | --------------------------------------- | ---------------------------- |
+| build + 安裝並啟動常駐服務                     | `npm run install-autostart`             | `make install-service`       |
+| 移除常駐服務                                   | `npm run uninstall-autostart`           | `make uninstall-service`     |
+| 啟動常駐服務                                   | `npm run service-start`                 | `make service-start`         |
+| 停止常駐服務                                   | `npm run service-stop`                  | `make service-stop`          |
+| 服務狀態（含 `:8307` 監聽）                    | `npm run service-status`                | `make service-status`        |
+| 列出 threads-mcp 行程（偵測殭屍／重複 stdio）  | `npm run ps-check`                      | `make ps-check`              |
+| 清掉 stdio 殘留行程（保留 `--http` 常駐）      | `npm run kill-stale`                    | `make kill-stale`            |
+| 顯示目前 Claude 的 threads 設定（stdio／http） | `npm run config-check`                  | `make config-check`          |
+| 切換 Claude config 至 HTTP（先 remove 再 add） | `npm run use-http`                      | `make use-http`              |
+| 切回 Claude config 至 stdio                    | `npm run use-stdio`                     | `make use-stdio`             |
+| 前景啟動 HTTP 伺服器                           | `npm run start:http`                    | `make start-http`            |
+| 前景啟動 stdio 伺服器                          | `npm run start:stdio`                   | `make start-stdio`           |
+| 安裝 ngrok tunnel 開機自動啟動                 | `npm run install-ngrok-autostart`       | —                            |
+| 移除 ngrok tunnel 自動啟動                     | `npm run uninstall-ngrok-autostart`     | —                            |
+| 編譯 TypeScript → `dist/`                      | `npm run build`                         | `make build`                 |
+| 刪除 `dist/`（跨平台）                         | `npm run clean`                         | `make clean`                 |
 
 > 💡 `make`（或 `make list`）可列出所有 macOS/Linux 捷徑目標；它們與上表左欄的 `npm run` 等價。
 
