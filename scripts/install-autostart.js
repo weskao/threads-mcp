@@ -224,7 +224,7 @@ function macInstallNgrok() {
     <string>${macNgrokCommand().replace(/&/g, '&amp;').replace(/</g, '&lt;')}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${projectRoot}</string>
+  <string>${os.homedir()}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
