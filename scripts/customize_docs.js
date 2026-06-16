@@ -75,7 +75,7 @@ function upsertEnvValue(key, value) {
 }
 
 function applyToDocs(appId, businessId) {
-  const docFiles = ['SETUP.md', 'GET_THREADS_TOKEN.md'];
+  const docFiles = ['SETUP.md'];
   const results = [];
 
   for (const file of docFiles) {
@@ -116,7 +116,7 @@ async function main() {
   });
 
   console.log('=== Threads Documentation Customization Helper ===\n');
-  console.log('此腳本將協助您將 `SETUP.md` 與 `GET_THREADS_TOKEN.md` 中的預留位置');
+  console.log('此腳本將協助您將 `SETUP.md` 中的預留位置');
   console.log('替換為您自己實際的 Meta APP_ID 與 BUSINESS_ID，');
   console.log('以利您在閱讀文件時能直接點擊連結跳轉至您的 App 設定頁面。\n');
 
@@ -223,10 +223,10 @@ async function main() {
   } else {
     console.log(`  .env       ：不更新（沿用 APP_ID=${appId}${businessId ? `，BUSINESS_ID=${businessId}` : ''}）`);
   }
-  console.log('  更新文件   ：SETUP.md、GET_THREADS_TOKEN.md');
+  console.log('  更新文件   ：SETUP.md');
   console.log('  ─────────────────────────────────────────');
-  const confirm = (await question('  確認執行？(Enter 確認 / n 取消): ')).trim().toLowerCase();
-  if (confirm === 'n' || confirm === 'no') {
+  const confirm = (await question('  確認執行？(y/n): ')).trim().toLowerCase();
+  if (confirm !== 'y') {
     console.log('\n⚠️  已取消，未做任何變更。');
     rl.close();
     return;
