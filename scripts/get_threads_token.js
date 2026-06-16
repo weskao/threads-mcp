@@ -3,7 +3,7 @@ import path from 'path';
 import axios from 'axios';
 import readline from 'readline';
 import { URL } from 'url';
-import { execSync } from 'child_process';
+import { execSync, execFile } from 'child_process';
 import dotenv from 'dotenv';
 import { getCredential, setCredential, getEnvCommand, isKeychainSupported } from './keychain.js';
 
@@ -55,10 +55,19 @@ function updateEnvFile(key, value) {
 }
 
 async function main() {
+  // 處理 Ctrl+C，避免 readline 殘留
+  process.on('SIGINT', () => {
+    console.log('\n\n⚠️  已取消操作。');
+    rl.close();
+    process.exit(0);
+  });
+
   console.log('=== Threads API Access Token Helper ===\n');
-  console.log('此腳本將協助您取得 Threads API 的長期 Access Token。');
-  console.log('請先確保您已在 Meta for Developers 建立了應用程式，並已將 Threads API 加入該應用程式。');
-  console.log(`請在應用程式設定中，將 Valid OAuth Redirect URI 精確設定為: ${REDIRECT_URI}\n`);
+  console.log('此腳本將協助您取得 Threads API 的長期 Access Token（60 天效期）。');
+  console.log('前置條件：');
+  console.log('  • 已在 Meta for Developers 建立應用程式並加入 Threads API');
+  console.log(`  • 已在 Use Cases > Threads API > Settings 中設定 Redirect URI：${REDIRECT_URI}`);
+  console.log('');
 
   let clientId = '';
   let clientSecret = '';
@@ -92,8 +101,10 @@ async function main() {
     const openMeta = (await question('是否直接為您在瀏覽器中開啟 Meta 我的應用程式頁面？(y/n): ')).trim().toLowerCase();
     if (openMeta === 'y' || openMeta === 'yes') {
       try {
-        const startCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start ""' : 'xdg-open';
-        execSync(`${startCmd} "https://developers.facebook.com/apps/"`);
+        const [cmd, ...args] = process.platform === 'darwin' ? ['open', 'https://developers.facebook.com/apps/']
+          : process.platform === 'win32' ? ['cmd', '/c', 'start', '', 'https://developers.facebook.com/apps/']
+          : ['xdg-open', 'https://developers.facebook.com/apps/'];
+        execFile(cmd, args);
         console.log('✅ 已嘗試在瀏覽器中開啟 Meta for Developers。');
       } catch (e) {
         console.log('無法自動開啟瀏覽器，請手動前往 https://developers.facebook.com/apps/');
@@ -113,7 +124,7 @@ async function main() {
   }
 
   if (!clientId || !clientSecret) {
-    console.error('錯誤：App ID 與 App Secret 為必填欄位！');
+    console.error('❌ App ID 與 App Secret 為必填欄位，請重新執行腳本。');
     rl.close();
     process.exit(1);
   }
@@ -121,69 +132,69 @@ async function main() {
   // 詢問是否存入系統金鑰庫或寫回 .env
   if (isKeychainSupported()) {
     if (!hasKeychainId && clientId) {
-      const saveId = (await question('\n偵測到系統金鑰庫中尚未儲存 Threads App ID，是否將其存入系統安全儲存區以提高安全性？(y/n): ')).trim().toLowerCase();
+      const saveId = (await question('\n🔐 是否將 App ID 存入系統安全儲存區？(y/n): ')).trim().toLowerCase();
       if (saveId === 'y' || saveId === 'yes') {
         if (setCredential('threads-app-id', clientId)) {
           hasKeychainId = true;
           updateEnvFile('THREADS_APP_ID', getEnvCommand('threads-app-id'));
-          console.log('✅ 已成功將 App ID 儲存至系統安全儲存區，並將對應指令寫回 .env。');
+          console.log('✅ App ID 已存入系統安全儲存區，.env 已更新為安全讀取指令。');
         } else {
           updateEnvFile('THREADS_APP_ID', clientId);
-          console.log('已將明文 App ID 寫回 .env。');
+          console.log('⚠️  金鑰庫寫入失敗，已將明文 App ID 寫回 .env。');
         }
       } else {
         updateEnvFile('THREADS_APP_ID', clientId);
-        console.log('已將明文 App ID 寫回 .env。');
+        console.log('ℹ️  已將明文 App ID 寫回 .env。');
       }
     }
 
     if (!hasKeychainSecret && clientSecret) {
-      const saveSecret = (await question('偵測到系統金鑰庫中尚未儲存 Threads App Secret，是否將其存入系統安全儲存區以提高安全性？(y/n): ')).trim().toLowerCase();
+      const saveSecret = (await question('🔐 是否將 App Secret 存入系統安全儲存區？(y/n): ')).trim().toLowerCase();
       if (saveSecret === 'y' || saveSecret === 'yes') {
         if (setCredential('threads-app-secret', clientSecret)) {
           hasKeychainSecret = true;
           updateEnvFile('THREADS_APP_SECRET', getEnvCommand('threads-app-secret'));
-          console.log('✅ 已成功將 App Secret 儲存至系統安全儲存區，並將對應指令寫回 .env。');
+          console.log('✅ App Secret 已存入系統安全儲存區，.env 已更新為安全讀取指令。');
         } else {
           updateEnvFile('THREADS_APP_SECRET', clientSecret);
-          console.log('已將明文 App Secret 寫回 .env。');
+          console.log('⚠️  金鑰庫寫入失敗，已將明文 App Secret 寫回 .env。');
         }
       } else {
         updateEnvFile('THREADS_APP_SECRET', clientSecret);
-        console.log('已將明文 App Secret 寫回 .env。');
+        console.log('ℹ️  已將明文 App Secret 寫回 .env。');
       }
     }
   } else {
     // 不支援金鑰庫，直接寫回 .env
     updateEnvFile('THREADS_APP_ID', clientId);
     updateEnvFile('THREADS_APP_SECRET', clientSecret);
-    console.log('✅ 已將明文 App ID 與 App Secret 寫入 .env。');
+    console.log('ℹ️  系統不支援安全儲存區，已將 App ID 與 App Secret 以明文寫入 .env。');
   }
 
   const authUrl = `https://threads.net/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=threads_basic,threads_content_publish,threads_manage_insights,threads_read_replies&response_type=code`;
 
-  console.log(`\n-------------------------------------------------------------`);
-  console.log(`正在為您在預設瀏覽器中開啟授權網址...`);
-  console.log(`若瀏覽器未自動開啟，請手動複製以下網址開啟：`);
-  console.log(`-------------------------------------------------------------`);
-  console.log(authUrl);
-  console.log(`-------------------------------------------------------------\n`);
+  console.log('\n  ─────────────────────────────────────────');
+  console.log('  正在開啟瀏覽器進行授權...');
+  console.log('  若未自動開啟，請手動複製下方網址：');
+  console.log('  ─────────────────────────────────────────');
+  console.log(`  ${authUrl}`);
+  console.log('  ─────────────────────────────────────────\n');
 
   try {
-    const startCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start ""' : 'xdg-open';
-    execSync(`${startCmd} "${authUrl}"`);
+    const [cmd, ...args] = process.platform === 'darwin' ? ['open', authUrl]
+      : process.platform === 'win32' ? ['cmd', '/c', 'start', '', authUrl]
+      : ['xdg-open', authUrl];
+    execFile(cmd, args);
+    console.log('✅ 瀏覽器已開啟授權頁面。\n');
   } catch (e) {
-    // 靜態忽略瀏覽器開啟失敗的錯誤，使用者仍可手動複製
+    console.log('⚠️  無法自動開啟瀏覽器，請手動複製上方網址。\n');
   }
-  
-  console.log('【授權操作指引】');
-  console.log('1. 開啟上方網址並同意授權。');
-  console.log('2. 授權完成後，瀏覽器會嘗試跳轉至 https://localhost:3000/auth/callback?code=... ');
-  console.log('   (此時網頁顯示「無法連線」或「連線不安全」是正常現象，請勿擔心！)');
-  console.log('3. 請直接複製瀏覽器上方網址列的「完整 URL」，並貼在下方輸入欄中。\n');
-  console.log('💡 備用方案提示：如果重新導向設定一直遇到 URL Blocked 錯誤，您可以按 Ctrl+C 中斷腳本，');
-  console.log('   改用 Graph API Explorer (https://developers.facebook.com/tools/explorer/) 取得短期 Token，');
-  console.log('   並執行 "npm run exchange-token" 來快速完成 60 天 Token 的設定。\n');
+
+  console.log('【授權步驟】');
+  console.log('  1. 在瀏覽器中同意授權。');
+  console.log('  2. 授權後瀏覽器會跳轉至 https://localhost:3000/...（顯示「無法連線」是正常現象）。');
+  console.log('  3. 複製瀏覽器網址列的完整 URL，貼至下方。\n');
+  console.log('  💡 若遇到 URL Blocked 錯誤：Ctrl+C 中斷，改用 npm run exchange-token。\n');
 
   const callbackUrlInput = (await question('請貼上重導向後的完整 URL: ')).trim();
 
