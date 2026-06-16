@@ -12,6 +12,7 @@ import {
 import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
 import { ThreadsAPIClient } from './api/client.js';
@@ -22,6 +23,8 @@ import { LocalFileServer, LOCAL_FILE_SERVER_DEFAULT_PORT } from './api/local-fil
 // run with an unexpected CWD, so a CWD-relative .env would silently fail to load.
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(moduleDir, '..', '.env') });
+
+const PUBLISHED_LOG_PATH = path.resolve(moduleDir, '..', 'docs', 'published_posts_log.jsonl');
 
 // A fresh MCP Server is built per connection by createServer() (defined near the
 // bottom of this file), where the two request handlers below are registered.
@@ -70,6 +73,53 @@ function scheduleTokenAutoRefresh({ recurring }: { recurring: boolean }): void {
   setTimeout(() => void runTokenRefreshOnce(), BOOT_REFRESH_DELAY_MS).unref();
   if (recurring) {
     setInterval(() => void runTokenRefreshOnce(), TOKEN_REFRESH_CHECK_MS).unref();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Published post log — append-only JSONL at docs/published_posts_log.jsonl
+// ---------------------------------------------------------------------------
+
+async function recordPublishedPost(opts: {
+  tool: string;
+  postId: string;
+  text?: string;
+  mediaType?: string;
+  permalink?: string;
+  localImagePath?: string;
+}): Promise<void> {
+  try {
+    const { tool, postId, text, mediaType, permalink: existingPermalink, localImagePath } = opts;
+
+    let permalink = existingPermalink;
+    if (!permalink && postId && apiClient) {
+      try {
+        const details: any = await apiClient.get(`/${postId}`, { fields: 'permalink' });
+        permalink = details?.permalink;
+      } catch {
+        // Non-fatal — continue without permalink
+      }
+    }
+
+    const record: Record<string, string | undefined> = {
+      post_id: postId,
+      published_at: new Date().toISOString(),
+      tool,
+    };
+    if (text !== undefined) record.text = text;
+    if (permalink) record.permalink = permalink;
+    if (mediaType) record.media_type = mediaType;
+    if (localImagePath) {
+      record.local_image_path = localImagePath;
+      const ext = path.extname(localImagePath);
+      const base = path.basename(localImagePath, ext);
+      record.image_filename_with_post_id = `${base}_${postId}${ext}`;
+    }
+
+    await fs.mkdir(path.dirname(PUBLISHED_LOG_PATH), { recursive: true });
+    await fs.appendFile(PUBLISHED_LOG_PATH, JSON.stringify(record) + '\n', 'utf8');
+  } catch {
+    // Never let logging fail a publish operation
   }
 }
 
@@ -1270,6 +1320,13 @@ const callToolHandler = async (request: CallToolRequest) => {
             published: true,
             original_data: containerData
           };
+          await recordPublishedPost({
+            tool: 'publish_thread',
+            postId: result.id,
+            text: containerData.text,
+            mediaType: containerData.media_type,
+            permalink: result.permalink,
+          });
         } catch (error) {
           // Provide helpful error messages
           if (error instanceof Error && error.message.includes('OAuth')) {
@@ -1399,6 +1456,13 @@ const callToolHandler = async (request: CallToolRequest) => {
           reply_to_id: reply_to_id,
           reply_data: replyData
         };
+        await recordPublishedPost({
+          tool: 'create_reply',
+          postId: result.id,
+          text: replyData.text,
+          mediaType: replyData.media_type,
+          permalink: result.permalink,
+        });
         break;
 
       case 'create_thread_chain':
@@ -1443,7 +1507,14 @@ const callToolHandler = async (request: CallToolRequest) => {
           };
           
           chainResults.push(chainResult);
-          
+          await recordPublishedPost({
+            tool: 'create_thread_chain',
+            postId: chainPublishedReply.id,
+            text: chainReplyData.text,
+            mediaType: chainReplyData.media_type,
+            permalink: chainPublishedReply.permalink,
+          });
+
           // Next reply will reply to this one for true threading
           if (chainPublishedReply.id) {
             currentReplyToId = chainPublishedReply.id;
@@ -1502,6 +1573,13 @@ const callToolHandler = async (request: CallToolRequest) => {
           quoted_post_id: quoted_post_id,
           quote_data: quoteData
         };
+        await recordPublishedPost({
+          tool: 'quote_post',
+          postId: result.id,
+          text: quoteData.text,
+          mediaType: quoteData.media_type,
+          permalink: result.permalink,
+        });
         break;
 
       case 'repost_thread':
@@ -1667,6 +1745,13 @@ const callToolHandler = async (request: CallToolRequest) => {
           },
           post_data: restrictedPostData
         };
+        await recordPublishedPost({
+          tool: 'create_post_with_restrictions',
+          postId: result.id,
+          text: restrictedPostData.text,
+          mediaType: restrictedPostData.media_type,
+          permalink: result.permalink,
+        });
         break;
 
       case 'schedule_post':
@@ -2421,7 +2506,13 @@ const callToolHandler = async (request: CallToolRequest) => {
               '3_step_creation_process'
             ]
           };
-          
+          await recordPublishedPost({
+            tool: 'create_carousel_post',
+            postId: result.id,
+            mediaType: 'CAROUSEL',
+            permalink: result.permalink,
+          });
+
         } catch (error) {
           // Provide detailed error information
           if (error instanceof Error && error.message.includes('OAuth')) {
@@ -2541,6 +2632,13 @@ const callToolHandler = async (request: CallToolRequest) => {
                   recurring_schedule: automationSettings?.recurring || 'none'
                 }
               };
+              await recordPublishedPost({
+                tool: 'schedule_post',
+                postId: result.id,
+                text: enhancedText,
+                mediaType: scheduledPostData.media_type,
+                permalink: result.permalink,
+              });
             } else {
               // Return container for later publishing (if scheduling is supported)
               result = {
@@ -2579,8 +2677,15 @@ const callToolHandler = async (request: CallToolRequest) => {
                 time_optimized: automationSettings?.auto_optimize_time && !scheduleTime
               }
             };
+            await recordPublishedPost({
+              tool: 'schedule_post',
+              postId: result.id,
+              text: enhancedText,
+              mediaType: immediatePostData.media_type,
+              permalink: result.permalink,
+            });
           }
-          
+
         } catch (error) {
           throw new Error(`Post scheduling configuration failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -3399,6 +3504,14 @@ add_action('publish_post', 'auto_crosspost_to_threads');
             image_url_used: imageUrl,
             published: true,
           };
+          await recordPublishedPost({
+            tool: 'publish_thread_local_image',
+            postId: localImagePublishResponse.id,
+            text: localImageText,
+            mediaType: detectedMediaType,
+            permalink: localImagePublishResponse.permalink,
+            localImagePath,
+          });
         } finally {
           await server.stop();
         }
