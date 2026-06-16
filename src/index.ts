@@ -86,10 +86,10 @@ async function recordPublishedPost(opts: {
   text?: string;
   mediaType?: string;
   permalink?: string;
-  localImagePath?: string;
+  localImagePaths?: string[];
 }): Promise<void> {
   try {
-    const { tool, postId, text, mediaType, permalink: existingPermalink, localImagePath } = opts;
+    const { tool, postId, text, mediaType, permalink: existingPermalink, localImagePaths } = opts;
 
     let permalink = existingPermalink;
     if (!permalink && postId && apiClient) {
@@ -101,19 +101,26 @@ async function recordPublishedPost(opts: {
       }
     }
 
-    const record: Record<string, string | undefined> = {
+    // Format published_at in UTC+8
+    const now = new Date();
+    const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const publishedAt = utc8.toISOString().replace('Z', '+08:00');
+
+    const record: Record<string, unknown> = {
       post_id: postId,
-      published_at: new Date().toISOString(),
+      published_at: publishedAt,
       tool,
     };
     if (text !== undefined) record.text = text;
     if (permalink) record.permalink = permalink;
     if (mediaType) record.media_type = mediaType;
-    if (localImagePath) {
-      record.local_image_path = localImagePath;
-      const ext = path.extname(localImagePath);
-      const base = path.basename(localImagePath, ext);
-      record.image_filename_with_post_id = `${base}_${postId}${ext}`;
+    if (localImagePaths && localImagePaths.length > 0) {
+      record.local_image_paths = localImagePaths;
+      record.image_filenames_with_post_id = localImagePaths.map(p => {
+        const ext = path.extname(p);
+        const base = path.basename(p, ext);
+        return `${base}_${postId}${ext}`;
+      });
     }
 
     await fs.mkdir(path.dirname(PUBLISHED_LOG_PATH), { recursive: true });
@@ -3510,7 +3517,7 @@ add_action('publish_post', 'auto_crosspost_to_threads');
             text: localImageText,
             mediaType: detectedMediaType,
             permalink: localImagePublishResponse.permalink,
-            localImagePath,
+            localImagePaths: [localImagePath],
           });
         } finally {
           await server.stop();
