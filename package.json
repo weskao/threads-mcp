@@ -36,7 +36,8 @@
     "notify": "node scripts/notify.js",
     "ngrok-images": "node scripts/ngrok-images.js",
     "install-ngrok-autostart": "node scripts/install-autostart.js --ngrok-only",
-    "uninstall-ngrok-autostart": "node scripts/install-autostart.js --uninstall --ngrok-only"
+    "uninstall-ngrok-autostart": "node scripts/install-autostart.js --uninstall --ngrok-only",
+    "sync-upstream-readme": "node scripts/sync-upstream-readme.js"
   },
   "keywords": [
     "mcp",
