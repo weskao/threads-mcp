@@ -16,6 +16,7 @@
 
 ```bash
 npm install
+npm run customize-docs     # （選用）把 <your_app_id> 換成真實 ID，產生 SETUP.local.md
 npm run build              # 編譯 TypeScript → dist/（啟動伺服器前必跑）
 npm run get-token          # 取得 60 天長期 Threads Token（或 npm run exchange-token）
 npm run setup-mcp          # 掛載到 Claude Desktop / Claude Code
