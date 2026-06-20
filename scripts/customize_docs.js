@@ -79,14 +79,13 @@ function applyToDocs(appId, businessId) {
   const results = [];
 
   for (const file of docFiles) {
-    const filePath = path.join(process.cwd(), file);
-    if (!fs.existsSync(filePath)) {
+    const srcPath = path.join(process.cwd(), file);
+    if (!fs.existsSync(srcPath)) {
       results.push({ file, status: 'missing' });
       continue;
     }
 
-    let content = fs.readFileSync(filePath, 'utf8');
-    const originalContent = content;
+    let content = fs.readFileSync(srcPath, 'utf8');
 
     content = content.replace(/<your_app_id>/g, appId);
     if (businessId) {
@@ -97,12 +96,10 @@ function applyToDocs(appId, businessId) {
       content = content.replace(/\?business_id=<your_business_id>/g, '');
     }
 
-    if (content !== originalContent) {
-      fs.writeFileSync(filePath, content, 'utf8');
-      results.push({ file, status: 'updated' });
-    } else {
-      results.push({ file, status: 'unchanged' });
-    }
+    const localFile = file.replace(/\.md$/, '.local.md');
+    const destPath = path.join(process.cwd(), localFile);
+    fs.writeFileSync(destPath, content, 'utf8');
+    results.push({ file: localFile, status: 'generated' });
   }
   return results;
 }
@@ -223,7 +220,7 @@ async function main() {
   } else {
     console.log(`  .env       ：不更新（沿用 APP_ID=${appId}${businessId ? `，BUSINESS_ID=${businessId}` : ''}）`);
   }
-  console.log('  更新文件   ：SETUP.md');
+  console.log('  產生文件   ：SETUP.local.md（個人專用，已加入 .gitignore，不會被 git 追蹤）');
   console.log('  ─────────────────────────────────────────');
   const confirm = (await question('  確認執行？(y/n): ')).trim().toLowerCase();
   if (confirm !== 'y') {
@@ -244,20 +241,24 @@ async function main() {
 
   // ── 套用文件 ──────────────────────────────────────────
   const results = applyToDocs(appId, businessId);
-  let updatedCount = 0;
+  let generatedCount = 0;
   for (const { file, status } of results) {
-    if (status === 'updated')   { console.log(`📝 已更新：${file}`); updatedCount++; }
-    else if (status === 'unchanged') console.log(`ℹ️  已是最新：${file}`);
-    else                             console.log(`⚠️  找不到：${file}，略過。`);
+    if (status === 'generated') { console.log(`📝 已產生：${file}`); generatedCount++; }
+    else                        { console.log(`⚠️  找不到來源：${file}，略過。`); }
   }
 
   // ── 完成摘要 ──────────────────────────────────────────
   console.log('\n  ─────────────────────────────────────────');
-  if (updatedCount > 0) {
-    console.log(`  🎉 完成！已更新 ${updatedCount} 個文件。`);
+  if (generatedCount > 0) {
+    console.log(`  🎉 完成！已產生 ${generatedCount} 個個人文件。`);
     console.log('     現在可點擊文件中的 Meta 開發者連結，直接跳轉至您的 App 設定頁面。');
+    console.log('');
+    console.log('  💡 提示：');
+    console.log('     • 個人文件（*.local.md）已加入 .gitignore，不會被提交至 git。');
+    console.log('     • 原始 SETUP.md 保持不變（仍含 <your_app_id> 佔位符）。');
+    console.log('     • 若日後 APP_ID 有變更，重新執行 npm run customize-docs 即可重新產生。');
   } else {
-    console.log('  ✅ 完成！文件均已是最新狀態，無需更新。');
+    console.log('  ⚠️  未產生任何文件，請確認來源文件存在。');
   }
   console.log('  ─────────────────────────────────────────');
 
