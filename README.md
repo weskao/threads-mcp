@@ -12,18 +12,18 @@
 
 ## ⚡ 快速開始
 
-完整流程（取得 Token、掛載到 Claude、常駐服務、ngrok）請看 **[SETUP.md](SETUP.md)**。
+> 📖 **初次設定？請直接照 [SETUP.md](SETUP.md) 逐步操作**，涵蓋 Meta 開發者帳號設定、App 建立、Token 取得到掛載 Claude 的完整流程。
+
+以下是整體流程概覽（回訪時的速查參考）：
 
 ```bash
 npm install
 npm run customize-docs     # （選用）把 <your_app_id> 換成真實 ID，產生 SETUP.local.md
-npm run build              # 編譯 TypeScript → dist/（啟動伺服器前必跑）
+npm run build              # 編譯 TypeScript → dist/
 npm run get-token          # 取得 60 天長期 Threads Token（或 npm run exchange-token）
 npm run setup-mcp          # 掛載到 Claude Desktop / Claude Code
 npm run install-autostart  # （選用）安裝常駐 HTTP 服務並開機自啟
 ```
-
-> 💡 `npm run build` 會把 `src/` 編譯到 `dist/index.js`，是啟動伺服器的前置步驟。`npm run setup-mcp` 與 `npm run install-autostart` 在偵測不到 `dist/index.js` 時會自動先跑一次 `npm run build`。
 
 ---
 
@@ -64,9 +64,9 @@ npm run install-autostart  # （選用）安裝常駐 HTTP 服務並開機自啟
 
 ## 🧰 指令
 
-- 入門 5 步見上方〈快速開始〉。
-- 服務管理、Claude 設定切換（HTTP／stdio）、ngrok、診斷等**完整指令對照**見 **[SETUP.md](SETUP.md)** 的〈跨平台指令對照〉。
-- 跨平台一律用 `npm run …`（**Windows／macOS／Linux 皆適用**）；macOS／Linux 可用同名 `make` 捷徑（如 `make build`、`make use-http`），Windows 沒有 `make` 直接用 `npm run`。
+服務管理、Claude 設定切換（HTTP／stdio）、ngrok、診斷等**完整指令對照**見 **[SETUP.md § 跨平台指令對照](SETUP.md)**。
+
+跨平台一律用 `npm run …`（Windows／macOS／Linux 皆適用）；macOS／Linux 可用同名 `make` 捷徑（如 `make build`、`make use-http`），Windows 沒有 `make` 直接用 `npm run`。
 
 ---
 
