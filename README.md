@@ -1,4 +1,4 @@
-# 🧵 Threads MCP Server — 強化版 Fork
+# 🧵 Threads MCP Server — 強化版 Fork Project
 
 > Fork of [baguskto/threads-mcp](https://github.com/baguskto/threads-mcp)。
 > 在原本的 Threads MCP 伺服器之上，新增**本地圖片／影片發文**、**常駐 HTTP 模式**、
@@ -16,10 +16,13 @@
 
 ```bash
 npm install
-npm run build          # 編譯 TypeScript → dist/
-npm run get-token      # 取得 60 天長期 Threads Token（或 npm run exchange-token）
-npm run setup-mcp      # 掛載到 Claude Desktop / Claude Code
+npm run build              # 編譯 TypeScript → dist/（啟動伺服器前必跑）
+npm run get-token          # 取得 60 天長期 Threads Token（或 npm run exchange-token）
+npm run setup-mcp          # 掛載到 Claude Desktop / Claude Code
+npm run install-autostart  # （選用）安裝常駐 HTTP 服務並開機自啟
 ```
+
+> 💡 `npm run build` 會把 `src/` 編譯到 `dist/index.js`，是啟動伺服器的前置步驟。`npm run setup-mcp` 與 `npm run install-autostart` 在偵測不到 `dist/index.js` 時會自動先跑一次 `npm run build`。
 
 ---
 
@@ -37,12 +40,14 @@ npm run setup-mcp      # 掛載到 Claude Desktop / Claude Code
 
 - 預設改為 **Streamable HTTP** 常駐模式：整台機器只跑一個行程，所有 IDE 共用 `http://127.0.0.1:8307/mcp`。
 - 一鍵安裝開機自啟：`npm run install-autostart`（macOS launchd／Linux systemd／Windows Task Scheduler）。
-- 仍可用 `--stdio` 切回「每個 IDE 各自啟動」的模式。
+- 只綁定 `127.0.0.1`、不對外網開放，並啟用 **DNS-rebinding 防護**（驗證 `Host`／`Origin`，僅放行 loopback）。
+- 仍可用 `--stdio` 切回「每個 IDE 各自啟動」的模式（stdio 用戶端設定務必在 `dist/index.js` 後加 `--stdio`）。
 
 ### 🔄 Token 60 天自動續期
 
 - 常駐服務定時檢查，在效期 ≤ 10 天時自動續期；另搭配系統排程作為雙保險。
 - 手動觸發：`npm run refresh-token`（加 `-- --force` 立即續期）。
+- 取得後可用 [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/) 確認效期與權限（詳見 [SETUP.md](SETUP.md)）。
 
 ### 📝 發文記錄
 
@@ -52,7 +57,15 @@ npm run setup-mcp      # 掛載到 Claude Desktop / Claude Code
 
 - 繁體中文安裝指南 **[SETUP.md](SETUP.md)**。
 - `npm run customize-docs`：把文件中的 `<your_app_id>` 佔位符換成你的真實 ID，輸出個人專用 `SETUP.local.md`（已加入 `.gitignore`，不進版控）。
-- 跨平台 npm 腳本 + macOS/Linux `make` 捷徑：`use-http`、`use-stdio`、`ps-check`、`kill-stale`、`config-check`…
+- 跨平台 `npm run` 腳本（Windows／macOS／Linux 皆可）：`npm run use-http`、`use-stdio`、`ps-check`、`kill-stale`、`config-check`…；macOS／Linux 另有同名 `make` 捷徑。
+
+---
+
+## 🧰 指令
+
+- 入門 5 步見上方〈快速開始〉。
+- 服務管理、Claude 設定切換（HTTP／stdio）、ngrok、診斷等**完整指令對照**見 **[SETUP.md](SETUP.md)** 的〈跨平台指令對照〉。
+- 跨平台一律用 `npm run …`（**Windows／macOS／Linux 皆適用**）；macOS／Linux 可用同名 `make` 捷徑（如 `make build`、`make use-http`），Windows 沒有 `make` 直接用 `npm run`。
 
 ---
 
